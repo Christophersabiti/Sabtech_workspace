@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -8,7 +8,7 @@ import { Project, Invoice, InvoiceSchedule, Client } from '@/types';
 import { formatCurrency, formatDate, BILLING_TYPE_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { ArrowLeft, Plus, X, Pencil, Trash2, Tag, Settings2, CheckCircle, XCircle } from 'lucide-react';
+import { ArrowLeft, Plus, X, Pencil, Trash2, Tag, Settings2, CheckCircle, XCircle, Download, Upload, FileSpreadsheet, AlertCircle } from 'lucide-react';
 
 type Tab = 'overview' | 'tasks' | 'invoices' | 'schedule';
 
@@ -43,6 +43,34 @@ const TASK_STATUS_STYLES: Record<TaskStatus, string> = {
   cancelled:   'bg-red-100 text-red-500',
 };
 
+type TaskUploadRow = {
+  rowNumber: number;
+  title: string;
+  description: string;
+  start_date: string;
+  end_date: string;
+  assigned_to: string;
+  status: TaskStatus;
+  errors: string[];
+};
+
+const TASK_TEMPLATE_HEADERS = ['Title', 'Description', 'Start Date', 'Due Date', 'Assigned To', 'Status'];
+
+const TASK_STATUS_ALIASES: Record<string, TaskStatus> = {
+  pending: 'pending',
+  notstarted: 'pending',
+  not_started: 'pending',
+  todo: 'pending',
+  inprogress: 'in_progress',
+  in_progress: 'in_progress',
+  progress: 'in_progress',
+  completed: 'completed',
+  complete: 'completed',
+  done: 'completed',
+  cancelled: 'cancelled',
+  canceled: 'cancelled',
+};
+
 const emptyTaskForm = () => ({
   title: '',
   description: '',
@@ -52,10 +80,109 @@ const emptyTaskForm = () => ({
   status: 'pending' as TaskStatus,
 });
 
+function encodeCsvCell(value: string) {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"') {
+      if (quoted && next === '"') {
+        value += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === ',' && !quoted) {
+      row.push(value.trim());
+      value = '';
+    } else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && next === '\n') i += 1;
+      row.push(value.trim());
+      if (row.some(cell => cell.length > 0)) rows.push(row);
+      row = [];
+      value = '';
+    } else {
+      value += char;
+    }
+  }
+
+  row.push(value.trim());
+  if (row.some(cell => cell.length > 0)) rows.push(row);
+  return rows;
+}
+
+function normalizeTaskStatus(value: string): TaskStatus | null {
+  if (!value.trim()) return 'pending';
+  const key = value.toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z_]/g, '');
+  return TASK_STATUS_ALIASES[key] || null;
+}
+
+function normalizeTaskHeader(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
+function isValidIsoDate(value: string) {
+  return !value || /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function buildTaskUploadRows(text: string): { rows: TaskUploadRow[]; error: string | null } {
+  const csvRows = parseCsv(text);
+  if (csvRows.length < 2) return { rows: [], error: 'Upload a CSV with a header row and at least one task.' };
+
+  const headers = csvRows[0].map(normalizeTaskHeader);
+  const headerIndex = (names: string[]) => names.map(name => headers.indexOf(name)).find(index => index >= 0) ?? -1;
+  const titleIndex = headerIndex(['title', 'task', 'task_title']);
+
+  if (titleIndex < 0) return { rows: [], error: 'The CSV must include a Title column.' };
+
+  const descriptionIndex = headerIndex(['description', 'details', 'notes']);
+  const startDateIndex = headerIndex(['start_date', 'start']);
+  const dueDateIndex = headerIndex(['due_date', 'end_date', 'deadline', 'due']);
+  const assignedToIndex = headerIndex(['assigned_to', 'assignee', 'owner']);
+  const statusIndex = headerIndex(['status']);
+
+  const rows = csvRows.slice(1).map((csvRow, index) => {
+    const statusValue = statusIndex >= 0 ? csvRow[statusIndex] || '' : '';
+    const status = normalizeTaskStatus(statusValue);
+    const taskRow: TaskUploadRow = {
+      rowNumber: index + 2,
+      title: csvRow[titleIndex]?.trim() || '',
+      description: descriptionIndex >= 0 ? csvRow[descriptionIndex]?.trim() || '' : '',
+      start_date: startDateIndex >= 0 ? csvRow[startDateIndex]?.trim() || '' : '',
+      end_date: dueDateIndex >= 0 ? csvRow[dueDateIndex]?.trim() || '' : '',
+      assigned_to: assignedToIndex >= 0 ? csvRow[assignedToIndex]?.trim() || '' : '',
+      status: status || 'pending',
+      errors: [],
+    };
+
+    if (!taskRow.title) taskRow.errors.push('Title is required.');
+    if (!status) taskRow.errors.push('Status must be Not Started, In Progress, Completed, or Cancelled.');
+    if (!isValidIsoDate(taskRow.start_date)) taskRow.errors.push('Start Date must use YYYY-MM-DD.');
+    if (!isValidIsoDate(taskRow.end_date)) taskRow.errors.push('Due Date must use YYYY-MM-DD.');
+    if (taskRow.start_date && taskRow.end_date && taskRow.end_date < taskRow.start_date) {
+      taskRow.errors.push('Due Date cannot be before Start Date.');
+    }
+
+    return taskRow;
+  }).filter(row => row.title || row.description || row.start_date || row.end_date || row.assigned_to);
+
+  if (rows.length === 0) return { rows: [], error: 'No task rows were found in the CSV.' };
+  return { rows, error: null };
+}
+
 export default function ProjectProfilePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const [project, setProject]       = useState<Project & { client: Client } | null>(null);
   const [invoices, setInvoices]     = useState<Invoice[]>([]);
@@ -92,6 +219,11 @@ export default function ProjectProfilePage() {
   const [taskForm, setTaskForm]               = useState(emptyTaskForm());
   const [savingTask, setSavingTask]           = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showTaskUpload, setShowTaskUpload]   = useState(false);
+  const [taskUploadFileName, setTaskUploadFileName] = useState('');
+  const [taskUploadRows, setTaskUploadRows]   = useState<TaskUploadRow[]>([]);
+  const [taskUploadError, setTaskUploadError] = useState<string | null>(null);
+  const [savingTaskUpload, setSavingTaskUpload] = useState(false);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -108,9 +240,9 @@ export default function ProjectProfilePage() {
     setSchedules(sched || []);
     setTasks((tsk || []) as ProjectTask[]);
     setLoading(false);
-  }, [id]);
+  }, [id, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
 
   // ── Project edit ───────────────────────────────────────────────────────────
   function openEditProject() {
@@ -181,6 +313,40 @@ export default function ProjectProfilePage() {
     setShowTaskForm(true);
   }
 
+  function openTaskUpload() {
+    setTaskUploadFileName('');
+    setTaskUploadRows([]);
+    setTaskUploadError(null);
+    setShowTaskUpload(true);
+  }
+
+  function downloadTaskTemplate() {
+    const csv = `${TASK_TEMPLATE_HEADERS.map(encodeCsvCell).join(',')}\r\n`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'project-task-upload-template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function readTaskUploadFile(file: File) {
+    setTaskUploadFileName(file.name);
+    setTaskUploadError(null);
+    setTaskUploadRows([]);
+
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setTaskUploadError('Please upload a CSV file using the task template.');
+      return;
+    }
+
+    const text = await file.text();
+    const { rows, error } = buildTaskUploadRows(text);
+    setTaskUploadRows(rows);
+    setTaskUploadError(error);
+  }
+
   function openEditTask(task: ProjectTask) {
     setEditingTask(task);
     setTaskForm({
@@ -230,6 +396,38 @@ export default function ProjectProfilePage() {
     setEditingTask(null);
   }
 
+  async function saveTaskUpload() {
+    const validRows = taskUploadRows.filter(row => row.errors.length === 0);
+    if (validRows.length === 0) return;
+
+    setSavingTaskUpload(true);
+    const payload = validRows.map(row => ({
+      project_id:   id,
+      title:        row.title,
+      description:  row.description || null,
+      start_date:   row.start_date || null,
+      end_date:     row.end_date || null,
+      assigned_to:  row.assigned_to || null,
+      status:       row.status,
+    }));
+
+    const { data, error } = await supabase
+      .from('project_tasks')
+      .insert(payload)
+      .select();
+
+    if (error) {
+      setTaskUploadError(error.message);
+    } else {
+      setTasks(ts => [...ts, ...((data || []) as ProjectTask[])]);
+      setShowTaskUpload(false);
+      setProjectToast({ msg: `${validRows.length} task${validRows.length === 1 ? '' : 's'} uploaded successfully.`, ok: true });
+      setTimeout(() => setProjectToast(null), 3000);
+    }
+
+    setSavingTaskUpload(false);
+  }
+
   async function updateTaskStatus(taskId: string, newStatus: TaskStatus) {
     setTasks(ts => ts.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
     await supabase
@@ -273,6 +471,8 @@ export default function ProjectProfilePage() {
     completed: 'bg-blue-100 text-blue-700',
     cancelled: 'bg-slate-100 text-slate-500',
   };
+  const taskUploadInvalidCount = taskUploadRows.filter(row => row.errors.length > 0).length;
+  const taskUploadValidCount = taskUploadRows.length - taskUploadInvalidCount;
 
   return (
     <div>
@@ -384,10 +584,22 @@ export default function ProjectProfilePage() {
             ))}
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <button
+              onClick={downloadTaskTemplate}
+              className="inline-flex items-center justify-center gap-2 border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm px-4 py-2 rounded-lg"
+            >
+              <Download className="h-4 w-4" /> Template
+            </button>
+            <button
+              onClick={openTaskUpload}
+              className="inline-flex items-center justify-center gap-2 border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-sm px-4 py-2 rounded-lg"
+            >
+              <Upload className="h-4 w-4" /> Bulk Upload
+            </button>
             <button
               onClick={openAddTask}
-              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg"
+              className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg"
             >
               <Plus className="h-4 w-4" /> Add Task
             </button>
@@ -618,6 +830,136 @@ export default function ProjectProfilePage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Bulk task upload modal */}
+      {showTaskUpload && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Bulk Upload Tasks</h2>
+                <p className="text-xs text-slate-500 mt-1">Use the standard CSV template, then review the rows before uploading.</p>
+              </div>
+              <button onClick={() => setShowTaskUpload(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-y-auto">
+              <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center hover:border-blue-300 hover:bg-blue-50/50">
+                  <FileSpreadsheet className="h-7 w-7 text-blue-600" />
+                  <span className="mt-2 text-sm font-medium text-slate-800">{taskUploadFileName || 'Choose a CSV file'}</span>
+                  <span className="mt-1 text-xs text-slate-500">Columns: Title, Description, Start Date, Due Date, Assigned To, Status</span>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="sr-only"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) void readTaskUploadFile(file);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={downloadTaskTemplate}
+                  className="inline-flex h-28 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <Download className="h-4 w-4" /> Download Template
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="grid gap-3 text-sm sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Ready</p>
+                    <p className="mt-1 text-lg font-bold text-green-700">{taskUploadValidCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Needs Review</p>
+                    <p className="mt-1 text-lg font-bold text-red-600">{taskUploadInvalidCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Default Status</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-800">Not Started</p>
+                  </div>
+                </div>
+              </div>
+
+              {taskUploadError && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{taskUploadError}</span>
+                </div>
+              )}
+
+              {taskUploadRows.length > 0 && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-xs font-medium uppercase text-slate-500">Preview</p>
+                  </div>
+                  <div className="max-h-72 overflow-auto">
+                    <table className="w-full min-w-[760px] text-sm">
+                      <thead className="bg-white border-b border-slate-100">
+                        <tr>
+                          {['Row', 'Title', 'Due Date', 'Assigned To', 'Status', 'Validation'].map(h => (
+                            <th key={h} className="px-4 py-3 text-left text-xs font-medium uppercase text-slate-500">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {taskUploadRows.map(row => (
+                          <tr key={row.rowNumber} className={row.errors.length > 0 ? 'bg-red-50/60' : 'hover:bg-slate-50'}>
+                            <td className="px-4 py-3 text-xs text-slate-500">{row.rowNumber}</td>
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-slate-900">{row.title || '-'}</p>
+                              {row.description && <p className="mt-0.5 line-clamp-1 text-xs text-slate-400">{row.description}</p>}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{row.end_date || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{row.assigned_to || '-'}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${TASK_STATUS_STYLES[row.status]}`}>
+                                {TASK_STATUS_LABELS[row.status]}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs">
+                              {row.errors.length === 0 ? (
+                                <span className="font-medium text-green-700">Ready</span>
+                              ) : (
+                                <span className="text-red-700">{row.errors.join(' ')}</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-slate-200 p-6 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setShowTaskUpload(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveTaskUpload}
+                disabled={savingTaskUpload || taskUploadValidCount === 0 || taskUploadInvalidCount > 0}
+                className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {savingTaskUpload ? 'Uploading...' : `Upload ${taskUploadValidCount} Task${taskUploadValidCount === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
