@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Payment } from '@/types';
 import { formatCurrency, formatDate, PAYMENT_METHOD_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -11,7 +12,8 @@ import { Search, CreditCard } from 'lucide-react';
 type PaymentRow = Payment & { invoice: { invoice_number: string; invoice_id: string; client: { name: string } } };
 
 export default function PaymentsPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [payments, setPayments]           = useState<PaymentRow[]>([]);
   const [loading, setLoading]             = useState(true);
   const [search, setSearch]               = useState('');
@@ -19,19 +21,33 @@ export default function PaymentsPage() {
   const [statusFilter, setStatusFilter]   = useState('');
 
   const fetchPayments = useCallback(async () => {
+    if (!activeCompanyId) {
+      if (!companyLoading) {
+        setPayments([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     let query = supabase
       .from('payments')
       .select('*, invoice:invoices(invoice_number, client:clients(name))')
+      .eq('company_id', activeCompanyId)
       .order('payment_date', { ascending: false });
     if (methodFilter) query = query.eq('payment_method', methodFilter);
     if (statusFilter) query = query.eq('status', statusFilter);
     const { data } = await query;
     setPayments((data || []) as PaymentRow[]);
     setLoading(false);
-  }, [methodFilter, statusFilter]);
+  }, [activeCompanyId, companyLoading, methodFilter, statusFilter, supabase]);
 
-  useEffect(() => { fetchPayments(); }, [fetchPayments]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setPayments([]);
+      return fetchPayments();
+    });
+  }, [fetchPayments]);
 
   const filtered = payments.filter(p =>
     [p.payment_number, p.invoice?.invoice_number, p.invoice?.client?.name, p.reference_number]

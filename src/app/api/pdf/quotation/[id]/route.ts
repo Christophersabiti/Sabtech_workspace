@@ -170,6 +170,7 @@ export async function GET(
       .from('quotations')
       .select('*, client:clients(name, company_name, email, phone, address, city, country, tin_number), quotation_items(*)')
       .eq('id', id)
+      .eq('company_id', access.companyId)
       .order('sort_order', { referencedTable: 'quotation_items', ascending: true })
       .single(),
     supabase

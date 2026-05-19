@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Quotation, QuotationStatus } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -11,7 +12,6 @@ import {
   FileText,
   CheckCircle,
   Clock,
-  XCircle,
   Send,
   ChevronRight,
 } from 'lucide-react';
@@ -39,24 +39,38 @@ const ALL_STATUSES: QuotationStatus[] = ['draft', 'sent', 'approved', 'rejected'
 type QuotationRow = Quotation & { client: { name: string } | null };
 
 export default function QuotationsPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [quotations, setQuotations] = useState<QuotationRow[]>([]);
   const [loading, setLoading]       = useState(true);
   const [statusFilter, setStatusFilter] = useState<QuotationStatus | ''>('');
 
   const load = useCallback(async () => {
+    if (companyLoading) return;
+    if (!activeCompanyId) {
+      setQuotations([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     let q = supabase
       .from('quotations')
       .select('*, client:clients(name)')
+      .eq('company_id', activeCompanyId)
       .order('created_at', { ascending: false });
     if (statusFilter) q = q.eq('status', statusFilter);
     const { data } = await q;
     setQuotations((data || []) as QuotationRow[]);
     setLoading(false);
-  }, [statusFilter]);
+  }, [activeCompanyId, companyLoading, statusFilter, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setQuotations([]);
+      return load();
+    });
+  }, [load]);
 
   // Stats
   const total     = quotations.length;

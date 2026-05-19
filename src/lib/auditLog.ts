@@ -18,6 +18,7 @@ export type PaymentAuditAction =
   | 'reversed';
 
 export type ClientAuditEntry = {
+  company_id: string;
   client_id:  string;
   changed_by: string | null;
   field_name: string;
@@ -26,6 +27,7 @@ export type ClientAuditEntry = {
 };
 
 export type InvoiceAuditEntry = {
+  company_id:   string;
   invoice_id:   string;
   action:       InvoiceAuditAction;
   performed_by: string | null;
@@ -36,6 +38,7 @@ export type InvoiceAuditEntry = {
 };
 
 export type PaymentAuditEntry = {
+  company_id:   string;
   payment_id:   string;
   action:       PaymentAuditAction;
   performed_by: string | null;
@@ -54,6 +57,7 @@ export type PaymentAuditEntry = {
  */
 export async function logClientChanges(
   supabase:  SupabaseClient,
+  companyId: string,
   clientId:  string,
   changedBy: string | null,
   oldData:   Record<string, unknown>,
@@ -72,6 +76,7 @@ export async function logClientChanges(
     const newVal = newData[field] ?? null;
     if (String(oldVal) !== String(newVal)) {
       rows.push({
+        company_id: companyId,
         client_id:  clientId,
         changed_by: changedBy,
         field_name: field,
@@ -92,6 +97,7 @@ export async function logInvoiceAction(
   entry:    InvoiceAuditEntry,
 ): Promise<void> {
   await supabase.from('invoice_audit_log').insert({
+    company_id:   entry.company_id,
     invoice_id:   entry.invoice_id,
     action:       entry.action,
     performed_by: entry.performed_by ?? null,
@@ -109,6 +115,7 @@ export async function logPaymentAction(
   entry:    PaymentAuditEntry,
 ): Promise<void> {
   await supabase.from('payment_audit_log').insert({
+    company_id:   entry.company_id,
     payment_id:   entry.payment_id,
     action:       entry.action,
     performed_by: entry.performed_by ?? null,

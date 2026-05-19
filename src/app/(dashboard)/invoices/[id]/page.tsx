@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Invoice, InvoiceItem, Payment } from '@/types';
 import { formatCurrency, formatDate, PAYMENT_METHOD_LABELS } from '@/lib/utils';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -14,6 +15,7 @@ export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -29,21 +31,49 @@ export default function InvoiceDetailPage() {
   const [savingPay, setSavingPay] = useState(false);
 
   const load = useCallback(async () => {
+    if (companyLoading) return;
+    if (!activeCompanyId) {
+      setInvoice(null);
+      setItems([]);
+      setPayments([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const [{ data: inv }, { data: inv_items }, { data: pays }] = await Promise.all([
-      supabase.from('invoices').select('*, client:clients(*), project:projects(project_name, project_code)').eq('id', id).single(),
-      supabase.from('invoice_items').select('*, service:services(service_name)').eq('invoice_id', id).order('sort_order'),
-      supabase.from('payments').select('*').eq('invoice_id', id).order('payment_date', { ascending: false }),
+      supabase
+        .from('invoices')
+        .select('*, client:clients(*), project:projects(project_name, project_code)')
+        .eq('id', id)
+        .eq('company_id', activeCompanyId)
+        .single(),
+      supabase
+        .from('invoice_items')
+        .select('*, service:services(service_name)')
+        .eq('invoice_id', id)
+        .eq('company_id', activeCompanyId)
+        .order('sort_order'),
+      supabase
+        .from('payments')
+        .select('*')
+        .eq('invoice_id', id)
+        .eq('company_id', activeCompanyId)
+        .order('payment_date', { ascending: false }),
     ]);
     setInvoice(inv as Invoice);
     setItems(inv_items || []);
     setPayments(pays || []);
     setLoading(false);
-  }, [id, supabase]);
+  }, [activeCompanyId, companyLoading, id, supabase]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
+    void Promise.resolve().then(() => {
+      setInvoice(null);
+      setItems([]);
+      setPayments([]);
+      return load();
+    });
   }, [load]);
 
   async function nextPaymentNumber(): Promise<string> {

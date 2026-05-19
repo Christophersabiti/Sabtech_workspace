@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Quotation, QuotationItem, QuotationStatus, Project } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import {
@@ -38,6 +39,7 @@ export default function QuotationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
 
   const [quotation, setQuotation]       = useState<FullQuotation | null>(null);
   const [projects, setProjects]         = useState<Project[]>([]);
@@ -54,12 +56,21 @@ export default function QuotationDetailPage() {
   };
 
   const load = useCallback(async () => {
+    if (companyLoading) return;
     if (!id || id === 'new') return;
+    if (!activeCompanyId) {
+      setQuotation(null);
+      setProjects([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const { data, error: err } = await supabase
       .from('quotations')
       .select('*, client:clients(name, company_name, email, address), quotation_items(*)')
       .eq('id', id)
+      .eq('company_id', activeCompanyId)
       .order('sort_order', { referencedTable: 'quotation_items', ascending: true })
       .single();
     if (err || !data) {
@@ -69,11 +80,15 @@ export default function QuotationDetailPage() {
     }
     setQuotation(data as FullQuotation);
     setLoading(false);
-  }, [id, supabase]);
+  }, [activeCompanyId, companyLoading, id, supabase]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
+    void Promise.resolve().then(() => {
+      setQuotation(null);
+      setProjects([]);
+      setSelectedProject('');
+      return load();
+    });
   }, [load]);
 
   // Load projects for the "Convert to Tasks" project picker

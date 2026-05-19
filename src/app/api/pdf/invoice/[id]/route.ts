@@ -156,16 +156,19 @@ export async function GET(
       .from('invoices')
       .select('*, client:clients(*), project:projects(project_name, project_code)')
       .eq('id', id)
+      .eq('company_id', access.companyId)
       .single(),
     supabase
       .from('invoice_items')
       .select('*, service:services(service_name)')
       .eq('invoice_id', id)
+      .eq('company_id', access.companyId)
       .order('sort_order'),
     supabase
       .from('payments')
       .select('*')
       .eq('invoice_id', id)
+      .eq('company_id', access.companyId)
       .order('payment_date'),
     supabase
       .from('company_settings')

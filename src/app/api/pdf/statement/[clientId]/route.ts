@@ -129,16 +129,23 @@ export async function GET(
     ,
     { data: companyRow },
   ] = await Promise.all([
-    supabase.from('clients').select('*').eq('id', clientId).single(),
+    supabase
+      .from('clients')
+      .select('*')
+      .eq('id', clientId)
+      .eq('company_id', access.companyId)
+      .single(),
     supabase
       .from('invoices')
       .select('*, project:projects(project_name, project_code)')
       .eq('client_id', clientId)
+      .eq('company_id', access.companyId)
       .not('status', 'in', '("void","cancelled")')
       .order('issue_date', { ascending: true }),
     supabase
       .from('payments')
       .select('*, invoice:invoices(invoice_number)')
+      .eq('company_id', access.companyId)
       .in('invoice_id',
         // sub-select IDs for this client — done via a follow-up if needed
         // For simplicity: fetch all payments then filter in-process
@@ -168,6 +175,7 @@ export async function GET(
     const { data: realPayments } = await supabase
       .from('payments')
       .select('*, invoice:invoices(invoice_number)')
+      .eq('company_id', access.companyId)
       .in('invoice_id', invoiceIds)
       .neq('status', 'reversed')
       .order('payment_date', { ascending: true });

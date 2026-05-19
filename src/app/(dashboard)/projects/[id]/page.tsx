@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Project, Invoice, InvoiceSchedule, Client } from '@/types';
 import { formatCurrency, formatDate, BILLING_TYPE_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -184,6 +185,7 @@ export default function ProjectProfilePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
 
   const [project, setProject]       = useState<Project & { client: Client } | null>(null);
   const [invoices, setInvoices]     = useState<Invoice[]>([]);
@@ -229,21 +231,59 @@ export default function ProjectProfilePage() {
   const today = new Date().toISOString().slice(0, 10);
 
   const load = useCallback(async () => {
+    if (companyLoading) return;
+    if (!activeCompanyId) {
+      setProject(null);
+      setInvoices([]);
+      setSchedules([]);
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const [{ data: proj }, { data: inv }, { data: sched }, { data: tsk }] = await Promise.all([
-      supabase.from('projects').select('*, client:clients(*)').eq('id', id).single(),
-      supabase.from('invoices').select('*').eq('project_id', id).order('issue_date', { ascending: false }),
-      supabase.from('invoice_schedules').select('*').eq('project_id', id).order('sort_order'),
-      supabase.from('project_tasks').select('*').eq('project_id', id).order('created_at', { ascending: true }),
+      supabase
+        .from('projects')
+        .select('*, client:clients(*)')
+        .eq('id', id)
+        .eq('company_id', activeCompanyId)
+        .single(),
+      supabase
+        .from('invoices')
+        .select('*')
+        .eq('project_id', id)
+        .eq('company_id', activeCompanyId)
+        .order('issue_date', { ascending: false }),
+      supabase
+        .from('invoice_schedules')
+        .select('*')
+        .eq('project_id', id)
+        .eq('company_id', activeCompanyId)
+        .order('sort_order'),
+      supabase
+        .from('project_tasks')
+        .select('*')
+        .eq('project_id', id)
+        .eq('company_id', activeCompanyId)
+        .order('created_at', { ascending: true }),
     ]);
     setProject(proj as Project & { client: Client });
     setInvoices(inv || []);
     setSchedules(sched || []);
     setTasks((tsk || []) as ProjectTask[]);
     setLoading(false);
-  }, [id, supabase]);
+  }, [activeCompanyId, companyLoading, id, supabase]);
 
-  useEffect(() => { void Promise.resolve().then(load); }, [load]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setProject(null);
+      setInvoices([]);
+      setSchedules([]);
+      setTasks([]);
+      return load();
+    });
+  }, [load]);
 
   // ── Project edit ───────────────────────────────────────────────────────────
   function openEditProject() {

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { ClientWithStats } from '@/types';
 import { formatCurrency } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -62,7 +63,8 @@ function exportToCSV(clients: ClientWithStats[]) {
 }
 
 export default function ClientsPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const { filters, patch, clear, hasActive } = useClientFilters();
 
   const [clients, setClients] = useState<ClientWithStats[]>([]);
@@ -73,6 +75,14 @@ export default function ClientsPage() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
+    if (!activeCompanyId) {
+      if (!companyLoading) {
+        setClients([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
 
     if (showArchived) {
@@ -80,6 +90,7 @@ export default function ClientsPage() {
       const { data } = await supabase
         .from('clients')
         .select('*')
+        .eq('company_id', activeCompanyId)
         .eq('is_archived', true)
         .order('name');
 
@@ -93,6 +104,7 @@ export default function ClientsPage() {
       );
     } else {
       const { data } = await supabase.rpc('get_clients_filtered', {
+        p_company_id: activeCompanyId,
         p_search: filters.search || null,
         p_status: filters.status || null,
         p_has_overdue: filters.hasOverdue,
@@ -104,9 +116,14 @@ export default function ClientsPage() {
     }
 
     setLoading(false);
-  }, [filters, showArchived]);
+  }, [activeCompanyId, companyLoading, filters, showArchived, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setClients([]);
+      return load();
+    });
+  }, [load]);
 
   // Stats from current result set (non-archived)
   const totalClients = clients.length;
@@ -119,7 +136,8 @@ export default function ClientsPage() {
     await supabase
       .from('clients')
       .update({ is_archived: !client.is_archived })
-      .eq('id', client.id);
+      .eq('id', client.id)
+      .eq('company_id', client.company_id);
     load();
   }
 

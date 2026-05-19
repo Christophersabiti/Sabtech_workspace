@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Invoice } from '@/types';
 import { formatCurrency, formatDate, STATUS_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -14,7 +15,8 @@ const ALL_STATUSES = ['draft', 'sent', 'partially_paid', 'paid', 'overdue', 'can
 type InvoiceRow = Invoice & { client: { name: string }; project: { project_name: string } | null };
 
 export default function InvoicesPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [invoices, setInvoices]       = useState<InvoiceRow[]>([]);
   const [loading, setLoading]         = useState(true);
   const [search, setSearch]           = useState('');
@@ -23,10 +25,19 @@ export default function InvoicesPage() {
   const [dateTo, setDateTo]           = useState('');
 
   const fetchInvoices = useCallback(async () => {
+    if (!activeCompanyId) {
+      if (!companyLoading) {
+        setInvoices([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     let query = supabase
       .from('invoices')
       .select('*, client:clients(name), project:projects(project_name)')
+      .eq('company_id', activeCompanyId)
       .order('issue_date', { ascending: false });
     if (statusFilter) query = query.eq('status', statusFilter);
     if (dateFrom)     query = query.gte('issue_date', dateFrom);
@@ -34,9 +45,14 @@ export default function InvoicesPage() {
     const { data } = await query;
     setInvoices((data || []) as InvoiceRow[]);
     setLoading(false);
-  }, [statusFilter, dateFrom, dateTo]);
+  }, [activeCompanyId, companyLoading, dateFrom, dateTo, statusFilter, supabase]);
 
-  useEffect(() => { fetchInvoices(); }, [fetchInvoices]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setInvoices([]);
+      return fetchInvoices();
+    });
+  }, [fetchInvoices]);
 
   const filtered = invoices.filter(inv =>
     [inv.invoice_number, inv.client?.name, inv.project?.project_name]

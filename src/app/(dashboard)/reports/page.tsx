@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Invoice, Payment } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -72,7 +73,8 @@ type InvoiceRow = Invoice & { client: { name: string } | null; project: { projec
 type Tab = 'overview' | 'invoices' | 'payments' | 'clients';
 
 export default function ReportsPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [payments, setPayments] = useState<(Payment & { invoice: { invoice_number: string } | null })[]>([]);
   const [loading, setLoading]   = useState(true);
@@ -81,10 +83,20 @@ export default function ReportsPage() {
   const [dateTo, setDateTo]     = useState('');
 
   const loadData = useCallback(async () => {
+    if (!activeCompanyId) {
+      if (!companyLoading) {
+        setInvoices([]);
+        setPayments([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     let invQ = supabase
       .from('invoices')
       .select('*, client:clients(name), project:projects(project_name)')
+      .eq('company_id', activeCompanyId)
       .order('issue_date', { ascending: false });
     if (dateFrom) invQ = invQ.gte('issue_date', dateFrom);
     if (dateTo)   invQ = invQ.lte('issue_date', dateTo);
@@ -92,6 +104,7 @@ export default function ReportsPage() {
     let payQ = supabase
       .from('payments')
       .select('*, invoice:invoices(invoice_number)')
+      .eq('company_id', activeCompanyId)
       .order('payment_date', { ascending: false });
     if (dateFrom) payQ = payQ.gte('payment_date', dateFrom);
     if (dateTo)   payQ = payQ.lte('payment_date', dateTo);
@@ -100,9 +113,15 @@ export default function ReportsPage() {
     setInvoices((inv || []) as InvoiceRow[]);
     setPayments((pay || []) as (Payment & { invoice: { invoice_number: string } | null })[]);
     setLoading(false);
-  }, [dateFrom, dateTo]);
+  }, [activeCompanyId, companyLoading, dateFrom, dateTo, supabase]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setInvoices([]);
+      setPayments([]);
+      return loadData();
+    });
+  }, [loadData]);
 
   // Aggregates — exclude void from financial totals
   const activeInvoices  = invoices.filter(i => i.status !== 'void' && i.status !== 'cancelled');

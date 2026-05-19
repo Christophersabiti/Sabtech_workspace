@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Client, Invoice, Payment, ProjectWithTotals } from '@/types';
 import {
   formatCurrency,
@@ -66,7 +67,8 @@ export default function ClientProfilePage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
 
   // Guard: if the segment is literally "new", redirect to the create page.
   // This handles Next.js 16 Turbopack routing where [id] can match before
@@ -88,8 +90,17 @@ export default function ClientProfilePage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (companyLoading) return;
     if (!id) {
       setErrorMessage('Missing client ID.');
+      setLoading(false);
+      return;
+    }
+    if (!activeCompanyId) {
+      setClient(null);
+      setProjects([]);
+      setInvoices([]);
+      setPayments([]);
       setLoading(false);
       return;
     }
@@ -99,16 +110,23 @@ export default function ClientProfilePage() {
       setErrorMessage(null);
 
       const [clientRes, projectsRes, invoicesRes] = await Promise.all([
-        supabase.from('clients').select('*').eq('id', id).single(),
+        supabase
+          .from('clients')
+          .select('*')
+          .eq('id', id)
+          .eq('company_id', activeCompanyId)
+          .single(),
         supabase
           .from('project_totals')
           .select('*')
           .eq('client_id', id)
+          .eq('company_id', activeCompanyId)
           .order('created_at', { ascending: false }),
         supabase
           .from('invoices')
           .select('*')
           .eq('client_id', id)
+          .eq('company_id', activeCompanyId)
           .order('issue_date', { ascending: false }),
       ]);
 
@@ -130,6 +148,7 @@ export default function ClientProfilePage() {
         const paymentsRes = await supabase
           .from('payments')
           .select('*, invoice:invoices(invoice_number)')
+          .eq('company_id', activeCompanyId)
           .in('invoice_id', invoiceIds)
           .order('payment_date', { ascending: false });
 
@@ -151,10 +170,16 @@ export default function ClientProfilePage() {
     } finally {
       setLoading(false);
     }
-  }, [id, supabase]);
+  }, [activeCompanyId, companyLoading, id, supabase]);
 
   useEffect(() => {
-    void load();
+    void Promise.resolve().then(() => {
+      setClient(null);
+      setProjects([]);
+      setInvoices([]);
+      setPayments([]);
+      return load();
+    });
   }, [load]);
 
   const activeInvoices = useMemo(
@@ -207,7 +232,8 @@ export default function ClientProfilePage() {
       const { error } = await supabase
         .from('clients')
         .update({ is_archived: nextArchivedState })
-        .eq('id', client.id);
+        .eq('id', client.id)
+        .eq('company_id', client.company_id);
 
       if (error) {
         console.error('Failed to toggle archive status:', error);

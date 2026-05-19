@@ -48,8 +48,10 @@ export default function ServicesPage() {
   }, [activeCompanyId, companyLoading, supabase]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void fetchServices();
+    void Promise.resolve().then(() => {
+      setServices([]);
+      return fetchServices();
+    });
   }, [fetchServices]);
 
   function openNew() { setEditService(null); setForm(emptyForm); setShowModal(true); }

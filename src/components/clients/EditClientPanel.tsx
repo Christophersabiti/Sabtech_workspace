@@ -54,7 +54,11 @@ export function EditClientPanel({ client, onClose, onSaved }: Props) {
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
-    if (client) { setForm(toForm(client)); setErrorMsg(''); }
+    if (!client) return;
+    void Promise.resolve().then(() => {
+      setForm(toForm(client));
+      setErrorMsg('');
+    });
   }, [client]);
 
   // Escape key closes panel
@@ -99,6 +103,7 @@ export function EditClientPanel({ client, onClose, onSaved }: Props) {
       .from('clients')
       .update(payload)
       .eq('id', client.id)
+      .eq('company_id', client.company_id)
       .select('*')
       .single();
     if (error) {

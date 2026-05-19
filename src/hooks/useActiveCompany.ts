@@ -101,11 +101,15 @@ export function useActiveCompany() {
 
   const activeCompany =
     memberships.find((membership) => membership.company_id === activeCompanyId)?.company ?? null;
+  const currentUserRoleForCompany =
+    memberships.find((membership) => membership.company_id === activeCompanyId)?.role_id ?? null;
 
   return {
     activeCompanyId,
     activeCompany,
+    currentUserRoleForCompany,
     memberships,
+    userCompanyMemberships: memberships,
     loading,
     setActiveCompanyId,
   };

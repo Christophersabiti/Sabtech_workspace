@@ -78,8 +78,11 @@ export default function ProjectsPage() {
   }, [activeCompanyId, companyLoading, supabase]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void fetchData();
+    void Promise.resolve().then(() => {
+      setProjects([]);
+      setClients([]);
+      return fetchData();
+    });
   }, [fetchData]);
 
   const filtered = projects.filter(p =>

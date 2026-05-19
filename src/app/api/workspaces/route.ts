@@ -1,6 +1,7 @@
 import { SupabaseClient, createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { RateLimitError, assertRateLimit, getRequestIdentity } from '@/lib/rateLimit';
 
 function slugify(value: string) {
   return value
@@ -45,6 +46,24 @@ export async function POST(req: NextRequest) {
 
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    assertRateLimit(`workspace:create:${getRequestIdentity(req, user.id)}`, {
+      limit: 5,
+      windowMs: 10 * 60 * 1000,
+    });
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: 'Too many workspace creation attempts. Please wait and try again.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(error.retryAfterSeconds) },
+        },
+      );
+    }
+    throw error;
   }
 
   const body = await req.json().catch(() => null) as {
@@ -122,6 +141,21 @@ export async function POST(req: NextRequest) {
         website: body?.website?.trim() || null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'company_id' });
+
+    await adminSupabase
+      .from('audit_log')
+      .insert({
+        company_id: company.id,
+        entity_type: 'company',
+        entity_id: company.id,
+        action: 'workspace_created',
+        performed_by: appUser.id,
+        new_values: {
+          name: company.name,
+          slug: company.slug,
+          owner_user_id: appUser.id,
+        },
+      });
 
     return NextResponse.json({ company });
   } catch (error) {

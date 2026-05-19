@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { PermissionService } from '@/lib/permissionService';
 
 type EntityAccessResult =
   | { ok: true; companyId: string }
@@ -47,6 +48,12 @@ export async function requireTenantEntityAccess(
 
   if (!data?.company_id) {
     return { ok: false, status: 404, message: 'Document not found' };
+  }
+
+  try {
+    await new PermissionService(supabase).assertCompanyAccess(session.user.id, data.company_id as string);
+  } catch {
+    return { ok: false, status: 403, message: 'You do not have access to this document' };
   }
 
   return { ok: true, companyId: data.company_id as string };
