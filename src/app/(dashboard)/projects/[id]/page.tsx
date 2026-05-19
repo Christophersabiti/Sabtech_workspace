@@ -16,6 +16,7 @@ type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
 type ProjectTask = {
   id: string;
+  company_id: string;
   project_id: string | null;
   quotation_id: string | null;
   quotation_item_id: string | null;
@@ -261,6 +262,7 @@ export default function ProjectProfilePage() {
 
   async function saveProject(e: React.FormEvent) {
     e.preventDefault();
+    if (!project) return;
     setSavingProject(true);
     const payload: Partial<Project> = {
       project_name:          editProjectForm.project_name.trim(),
@@ -271,7 +273,11 @@ export default function ProjectProfilePage() {
       total_contract_amount: editProjectForm.total_contract_amount ? parseFloat(editProjectForm.total_contract_amount) : null,
       description:           editProjectForm.description.trim() || null,
     };
-    const { error } = await supabase.from('projects').update(payload).eq('id', id);
+    const { error } = await supabase
+      .from('projects')
+      .update(payload)
+      .eq('id', id)
+      .eq('company_id', project.company_id);
     if (error) {
       setProjectToast({ msg: error.message, ok: false });
     } else {
@@ -286,8 +292,10 @@ export default function ProjectProfilePage() {
   // ── Schedule CRUD ──────────────────────────────────────────────────────────
   async function addScheduleLine(e: React.FormEvent) {
     e.preventDefault();
+    if (!project) return;
     setSavingSchedule(true);
     const { error } = await supabase.from('invoice_schedules').insert({
+      company_id: project.company_id,
       project_id:   id,
       schedule_name: scheduleForm.schedule_name,
       description:   scheduleForm.description || null,
@@ -362,6 +370,7 @@ export default function ProjectProfilePage() {
 
   async function saveTask(e: React.FormEvent) {
     e.preventDefault();
+    if (!project) return;
     setSavingTask(true);
     const payload = {
       title:       taskForm.title.trim(),
@@ -376,14 +385,15 @@ export default function ProjectProfilePage() {
       const { error } = await supabase
         .from('project_tasks')
         .update({ ...payload, updated_at: new Date().toISOString() })
-        .eq('id', editingTask.id);
+        .eq('id', editingTask.id)
+        .eq('company_id', project.company_id);
       if (!error) {
         setTasks(ts => ts.map(t => t.id === editingTask.id ? { ...t, ...payload } : t));
       }
     } else {
       const { data, error } = await supabase
         .from('project_tasks')
-        .insert({ ...payload, project_id: id })
+        .insert({ ...payload, company_id: project.company_id, project_id: id })
         .select()
         .single();
       if (!error && data) {
@@ -397,11 +407,13 @@ export default function ProjectProfilePage() {
   }
 
   async function saveTaskUpload() {
+    if (!project) return;
     const validRows = taskUploadRows.filter(row => row.errors.length === 0);
     if (validRows.length === 0) return;
 
     setSavingTaskUpload(true);
     const payload = validRows.map(row => ({
+      company_id:   project.company_id,
       project_id:   id,
       title:        row.title,
       description:  row.description || null,
@@ -429,15 +441,22 @@ export default function ProjectProfilePage() {
   }
 
   async function updateTaskStatus(taskId: string, newStatus: TaskStatus) {
+    if (!project) return;
     setTasks(ts => ts.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
     await supabase
       .from('project_tasks')
       .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', taskId);
+      .eq('id', taskId)
+      .eq('company_id', project.company_id);
   }
 
   async function deleteTask(taskId: string) {
-    await supabase.from('project_tasks').delete().eq('id', taskId);
+    if (!project) return;
+    await supabase
+      .from('project_tasks')
+      .delete()
+      .eq('id', taskId)
+      .eq('company_id', project.company_id);
     setTasks(ts => ts.filter(t => t.id !== taskId));
     setConfirmDeleteId(null);
   }

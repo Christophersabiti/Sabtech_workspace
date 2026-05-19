@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRequireRole } from '@/hooks/useCurrentUser';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { CompanySettings } from '@/types';
 import { Save, CheckCircle, AlertCircle, Receipt, ToggleLeft, ToggleRight } from 'lucide-react';
 
@@ -49,23 +50,30 @@ function Toggle({ on, onToggle, label, desc }: { on: boolean; onToggle: () => vo
 
 export default function InvoiceSettingsPage() {
   const { checking } = useRequireRole(['super_admin', 'admin']);
-  const supabase = createClient();
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const supabase = useMemo(() => createClient(), []);
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [form, setForm] = useState<InvoiceFormFields>(DEFAULTS);
 
   useEffect(() => {
     async function load() {
+      if (!activeCompanyId) {
+        if (!companyLoading) setLoading(false);
+        return;
+      }
+
+      setLoading(true);
       const { data } = await supabase
         .from('company_settings')
         .select('invoice_prefix,receipt_prefix,quote_prefix,default_due_days,default_invoice_footer,show_tin_on_invoice,show_logo_on_invoice,show_payment_history')
-        .eq('id', 1)
-        .single();
+        .eq('company_id', activeCompanyId)
+        .maybeSingle();
       if (data) setForm({ ...DEFAULTS, ...data });
       setLoading(false);
     }
     load();
-  }, []);
+  }, [activeCompanyId, companyLoading, supabase]);
 
   function set<K extends keyof InvoiceFormFields>(k: K, v: InvoiceFormFields[K]) {
     setForm(f => ({ ...f, [k]: v }));
@@ -74,9 +82,14 @@ export default function InvoiceSettingsPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaveState('saving');
+    if (!activeCompanyId) {
+      setSaveState('error');
+      setTimeout(() => setSaveState('idle'), 3000);
+      return;
+    }
     const { error } = await supabase
       .from('company_settings')
-      .upsert({ id: 1, ...form, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      .upsert({ company_id: activeCompanyId, ...form, updated_at: new Date().toISOString() }, { onConflict: 'company_id' });
 
     if (error) {
       setSaveState('error');
@@ -88,7 +101,7 @@ export default function InvoiceSettingsPage() {
   }
 
   if (checking) return <div className="py-16 text-center text-slate-400">Checking permissions…</div>;
-  if (loading) return <div className="text-center py-12 text-slate-400">Loading…</div>;
+  if (loading || companyLoading) return <div className="text-center py-12 text-slate-400">Loading…</div>;
 
   return (
     <form onSubmit={handleSave} className="max-w-2xl space-y-8">

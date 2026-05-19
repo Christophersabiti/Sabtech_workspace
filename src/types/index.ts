@@ -1,5 +1,6 @@
 export type Client = {
   id: string;
+  company_id: string;
   client_code: string;
   name: string;
   company_name: string | null;
@@ -39,6 +40,7 @@ export type ClientWithStats = Client & {
 
 export type Service = {
   id: string;
+  company_id: string;
   service_code: string;
   service_name: string;
   category: string | null;
@@ -50,6 +52,7 @@ export type Service = {
 
 export type Project = {
   id: string;
+  company_id: string;
   client_id: string;
   project_code: string;
   project_name: string;
@@ -69,6 +72,7 @@ export type Project = {
 
 export type InvoiceSchedule = {
   id: string;
+  company_id: string;
   project_id: string;
   schedule_name: string;
   description: string | null;
@@ -85,6 +89,7 @@ export type InvoiceStatus = 'draft' | 'sent' | 'partially_paid' | 'paid' | 'over
 
 export type Invoice = {
   id: string;
+  company_id: string;
   invoice_number: string;
   client_id: string;
   project_id: string | null;
@@ -128,6 +133,7 @@ export type InvoiceAuditLog = {
 
 export type InvoiceItem = {
   id: string;
+  company_id: string;
   invoice_id: string;
   service_id: string | null;
   item_name: string;
@@ -148,6 +154,7 @@ export type PaymentStatus = 'pending' | 'confirmed' | 'failed' | 'reversed';
 
 export type Payment = {
   id: string;
+  company_id: string;
   payment_number: string;
   invoice_id: string;
   payment_date: string;
@@ -202,7 +209,8 @@ export type ReportSummary = {
 // ─── Phase 2B: Admin Settings ─────────────────────────────────────────────
 
 export type CompanySettings = {
-  id: 1;
+  id: number;
+  company_id: string;
   company_name: string;
   trading_name: string | null;
   email: string | null;
@@ -239,6 +247,7 @@ export type PaymentMethodType =
 
 export type PaymentMethodDB = {
   id: string;
+  company_id: string;
   method_type: PaymentMethodType;
   display_name: string;
   account_name: string | null;
@@ -313,6 +322,7 @@ export type QuotationStatus =
 
 export type Quotation = {
   id: string;
+  company_id: string;
   quotation_number: string;
   client_id: string | null;
   project_name: string;
@@ -334,6 +344,7 @@ export type Quotation = {
 
 export type QuotationItem = {
   id: string;
+  company_id: string;
   quotation_id: string;
   item_name: string;
   description: string | null;
@@ -346,6 +357,7 @@ export type QuotationItem = {
 
 export type ProjectTask = {
   id: string;
+  company_id: string;
   project_id: string | null;
   quotation_id: string | null;
   quotation_item_id: string | null;

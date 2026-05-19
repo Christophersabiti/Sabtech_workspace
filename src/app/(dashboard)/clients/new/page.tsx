@@ -1,16 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { ArrowLeft, Save } from 'lucide-react';
 
 const CURRENCIES = ['UGX', 'USD', 'EUR', 'GBP', 'KES', 'TZS', 'RWF'];
 
 export default function NewClientPage() {
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -36,6 +38,10 @@ export default function NewClientPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!form.name.trim()) return;
+    if (!activeCompanyId) {
+      setErrorMsg('Select a company workspace before creating a client.');
+      return;
+    }
     
     setSaving(true);
     setErrorMsg('');
@@ -44,6 +50,7 @@ export default function NewClientPage() {
     const clientCode = `C-${Date.now().toString().slice(-6)}`;
 
     const payload = {
+      company_id:       activeCompanyId,
       client_code:     clientCode,
       name:            form.name.trim(),
       company_name:    form.company_name.trim()    || null,
@@ -273,11 +280,11 @@ export default function NewClientPage() {
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || companyLoading}
               className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
             >
               <Save className="h-4 w-4" />
-              {saving ? 'Saving...' : 'Save Client'}
+              {saving || companyLoading ? 'Saving...' : 'Save Client'}
             </button>
           </div>
         </form>

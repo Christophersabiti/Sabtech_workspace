@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { requireTenantEntityAccess } from '@/lib/authz';
 
 // ─── Company fallbacks ────────────────────────────────────────────────────────
 const COMPANY_DEFAULTS = {
@@ -113,6 +114,11 @@ export async function GET(
   }
 
   const { clientId } = await params;
+  const access = await requireTenantEntityAccess('clients', clientId);
+  if (!access.ok) {
+    return new NextResponse(access.message, { status: access.status });
+  }
+
   const isPrint = req.nextUrl.searchParams.get('print') === '1';
   const supabase = getSupabase();
 
@@ -120,7 +126,7 @@ export async function GET(
   const [
     { data: clientRow },
     { data: invoiceRows },
-    { data: paymentRows },
+    ,
     { data: companyRow },
   ] = await Promise.all([
     supabase.from('clients').select('*').eq('id', clientId).single(),
@@ -141,7 +147,11 @@ export async function GET(
       )
       .neq('status', 'reversed')
       .order('payment_date', { ascending: true }),
-    supabase.from('company_settings').select('*').eq('id', 1).single(),
+    supabase
+      .from('company_settings')
+      .select('*')
+      .eq('company_id', access.companyId)
+      .maybeSingle(),
   ]);
 
   if (!clientRow) {

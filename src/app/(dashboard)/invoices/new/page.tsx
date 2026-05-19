@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback, Suspense } from 'react';
+import { useEffect, useState, useCallback, Suspense, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Client, Project, Service } from '@/types';
 import { formatCurrency, calculateLineTotal } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -24,7 +25,8 @@ function genId() { return Math.random().toString(36).slice(2); }
 function NewInvoiceForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -57,12 +59,14 @@ function NewInvoiceForm() {
   const [discountAmount, setDiscountAmount] = useState(0);
 
   // Generate next invoice number by querying the highest existing one for this year
-  async function fetchNextInvoiceNumber(): Promise<string> {
+  const fetchNextInvoiceNumber = useCallback(async (): Promise<string> => {
+    if (!activeCompanyId) return '';
     const year = new Date().getFullYear();
     const prefix = `INV-${year}-`;
     const { data: latest } = await supabase
       .from('invoices')
       .select('invoice_number')
+      .eq('company_id', activeCompanyId)
       .like('invoice_number', `${prefix}%`)
       .order('invoice_number', { ascending: false })
       .limit(1);
@@ -72,14 +76,27 @@ function NewInvoiceForm() {
       if (!isNaN(parsed)) nextNum = parsed + 1;
     }
     return `${prefix}${String(nextNum).padStart(4, '0')}`;
-  }
+  }, [activeCompanyId, supabase]);
 
   // Load data
   useEffect(() => {
     async function load() {
+      if (!activeCompanyId) return;
+
       const [{ data: cl }, { data: svc }, nextNum] = await Promise.all([
-        supabase.from('clients').select('*').eq('is_archived', false).order('name'),
-        supabase.from('services').select('*').eq('is_active', true).order('category').order('service_name'),
+        supabase
+          .from('clients')
+          .select('*')
+          .eq('company_id', activeCompanyId)
+          .eq('is_archived', false)
+          .order('name'),
+        supabase
+          .from('services')
+          .select('*')
+          .eq('company_id', activeCompanyId)
+          .eq('is_active', true)
+          .order('category')
+          .order('service_name'),
         fetchNextInvoiceNumber(),
       ]);
       setClients(cl || []);
@@ -87,19 +104,21 @@ function NewInvoiceForm() {
       setInvoiceNumber(nextNum);
     }
     load();
-  }, []);
+  }, [activeCompanyId, fetchNextInvoiceNumber, supabase]);
 
   // Load projects when client changes
   useEffect(() => {
     if (!header.client_id) { setProjects([]); return; }
+    if (!activeCompanyId) { setProjects([]); return; }
     supabase
       .from('projects')
       .select('*')
+      .eq('company_id', activeCompanyId)
       .eq('client_id', header.client_id)
       .eq('status', 'active')
       .order('project_name')
       .then(({ data }) => setProjects(data || []));
-  }, [header.client_id]);
+  }, [activeCompanyId, header.client_id, supabase]);
 
   function addItem() {
     setItems(prev => [...prev, { id: genId(), service_id: '', item_name: '', description: '', quantity: 1, unit_price: 0, discount_percent: 0, tax_percent: 0 }]);
@@ -135,6 +154,8 @@ function NewInvoiceForm() {
   const totalAmount = subtotal - discountAmount + taxTotal;
 
   async function handleSave(status: 'draft' | 'sent') {
+    if (companyLoading) return;
+    if (!activeCompanyId) { alert('Select a company workspace before creating an invoice'); return; }
     if (!header.client_id) { alert('Please select a client'); return; }
     if (items.length === 0 || items.every(i => !i.item_name.trim())) { alert('Add at least one line item'); return; }
     setSaving(true);
@@ -147,6 +168,7 @@ function NewInvoiceForm() {
 
     async function attemptInsert(invNum: string) {
       return supabase.from('invoices').insert({
+        company_id: activeCompanyId,
         invoice_number: invNum,
         client_id: header.client_id,
         project_id: header.project_id || null,
@@ -185,6 +207,7 @@ function NewInvoiceForm() {
       .filter(i => i.item_name.trim())
       .map((item, idx) => ({
         invoice_id: inv.id,
+        company_id: activeCompanyId,
         service_id: item.service_id || null,
         item_name: item.item_name,
         description: item.description || null,
@@ -207,7 +230,11 @@ function NewInvoiceForm() {
 
     // Update schedule line if linked
     if (header.schedule_id) {
-      await supabase.from('invoice_schedules').update({ status: 'invoiced', generated_invoice_id: inv.id }).eq('id', header.schedule_id);
+      await supabase
+        .from('invoice_schedules')
+        .update({ status: 'invoiced', generated_invoice_id: inv.id })
+        .eq('id', header.schedule_id)
+        .eq('company_id', activeCompanyId);
     }
 
     router.push(`/invoices/${inv.id}`);

@@ -35,6 +35,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden — admin access required' }, { status: 403 });
   }
 
+  const { data: membership } = await authClient
+    .from('company_users')
+    .select('company_id, role_id')
+    .eq('app_user_id', appUser.id)
+    .eq('status', 'active')
+    .in('role_id', ['super_admin', 'admin'])
+    .limit(1)
+    .single();
+
+  if (!membership?.company_id) {
+    return NextResponse.json({ error: 'Forbidden - no active company admin membership found' }, { status: 403 });
+  }
+
   const body = await req.json();
   const { email, role, permission_overrides } = body as {
     email: string;
@@ -74,6 +87,7 @@ export async function POST(req: NextRequest) {
   const { data: invitation, error: invErr } = await adminSupabase
     .from('invitations')
     .insert({
+      company_id: membership.company_id,
       email: email.toLowerCase().trim(),
       role,
       invited_by: appUser.id,

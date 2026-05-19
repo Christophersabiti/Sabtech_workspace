@@ -5,6 +5,7 @@ import { Sidebar }         from '@/components/layout/Sidebar';
 import { TopBar }          from '@/components/layout/TopBar';
 import { MobileDrawer }    from '@/components/layout/MobileDrawer';
 import { MainContent }     from '@/components/layout/MainContent';
+import { WorkspaceGate }    from '@/components/workspaces/WorkspaceGate';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -21,7 +22,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Main content — margin shifts with sidebar state */}
         <MainContent>
-          {children}
+          <WorkspaceGate>{children}</WorkspaceGate>
         </MainContent>
       </div>
     </SidebarProvider>

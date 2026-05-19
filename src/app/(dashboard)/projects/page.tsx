@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Client, Project } from '@/types';
 import { formatCurrency, formatDate, BILLING_TYPE_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -32,7 +33,8 @@ const statusColor: Record<string, string> = {
 };
 
 export default function ProjectsPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [projects, setProjects] = useState<(Project & { client: Client })[]>([]);
   const [clients, setClients]   = useState<Client[]>([]);
   const [loading, setLoading]   = useState(true);
@@ -47,17 +49,38 @@ export default function ProjectsPage() {
   });
 
   const fetchData = useCallback(async () => {
+    if (!activeCompanyId) {
+      if (!companyLoading) {
+        setProjects([]);
+        setClients([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     const [{ data: proj }, { data: cl }] = await Promise.all([
-      supabase.from('projects').select('*, client:clients(*)').order('created_at', { ascending: false }),
-      supabase.from('clients').select('*').eq('is_archived', false).order('name'),
+      supabase
+        .from('projects')
+        .select('*, client:clients(*)')
+        .eq('company_id', activeCompanyId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('clients')
+        .select('*')
+        .eq('company_id', activeCompanyId)
+        .eq('is_archived', false)
+        .order('name'),
     ]);
     setProjects((proj || []) as (Project & { client: Client })[]);
     setClients((cl || []) as Client[]);
     setLoading(false);
-  }, []);
+  }, [activeCompanyId, companyLoading, supabase]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchData();
+  }, [fetchData]);
 
   const filtered = projects.filter(p =>
     [p.project_name, p.project_code, p.client?.name, p.client?.company_name]
@@ -67,10 +90,15 @@ export default function ProjectsPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!form.client_id || !form.project_name.trim()) return;
+    if (!activeCompanyId) {
+      alert('Select a company workspace before creating a project.');
+      return;
+    }
     setSaving(true);
     const project_code = generateProjectCode(form.project_name);
     const { error } = await supabase.from('projects').insert({
       ...form,
+      company_id: activeCompanyId,
       project_code,
       total_contract_amount: form.total_contract_amount ? parseFloat(form.total_contract_amount) : null,
       start_date: form.start_date || null,

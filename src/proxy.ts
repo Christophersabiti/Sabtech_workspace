@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/accept-invite'];
+const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/accept-invite', '/api/workspaces'];
 const ADMIN_PATHS  = [
   '/admin/users/roles',
   '/admin/users/invitations',
@@ -20,7 +20,10 @@ export async function proxy(req: NextRequest) {
   if (
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico' ||
-    pathname === '/logo.svg'
+    pathname === '/logo.svg' ||
+    pathname === '/manifest.json' ||
+    pathname.startsWith('/icons/') ||
+    pathname.startsWith('/manifest')
   ) {
     return NextResponse.next();
   }
@@ -60,14 +63,16 @@ export async function proxy(req: NextRequest) {
 
   // Admin-only paths → check role in app_users
   if (ADMIN_PATHS.some(p => pathname.startsWith(p))) {
-    const { data: appUser } = await supabase
-      .from('app_users')
-      .select('role')
+    const { data: adminMembership } = await supabase
+      .from('company_users')
+      .select('role_id')
       .eq('auth_user_id', session.user.id)
-      .single();
+      .eq('status', 'active')
+      .in('role_id', ['super_admin', 'admin'])
+      .limit(1)
+      .maybeSingle();
 
-    const adminRoles = ['super_admin', 'admin'];
-    if (!appUser || !adminRoles.includes(appUser.role)) {
+    if (!adminMembership) {
       return NextResponse.redirect(new URL('/', req.url));
     }
   }

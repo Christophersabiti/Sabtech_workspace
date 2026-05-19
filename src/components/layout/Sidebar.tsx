@@ -23,8 +23,10 @@ import {
   LogOut,
   ClipboardList,
 } from 'lucide-react';
-import { useState, useEffect, ElementType } from 'react';
+import { useState, useEffect, useMemo, ElementType } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { WorkspaceSwitcher } from '@/components/workspaces/WorkspaceSwitcher';
 import { useSidebar } from './SidebarContext';
 import { NavItem } from './NavItem';
 
@@ -62,7 +64,7 @@ type CompanyBranding = {
 };
 
 function useCurrentUserInfo() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const [info, setInfo] = useState<UserInfo | null>(null);
 
   useEffect(() => {
@@ -108,7 +110,8 @@ function useCurrentUserInfo() {
 }
 
 function useCompanyBranding() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, activeCompany } = useActiveCompany();
   const [branding, setBranding] = useState<CompanyBranding>({
     company_name: 'Sabtech Online',
     logo_url: null,
@@ -118,18 +121,31 @@ function useCompanyBranding() {
     let active = true;
 
     async function loadBranding() {
+      if (!activeCompanyId) {
+        setBranding({
+          company_name: activeCompany?.name ?? 'Sabtech Online',
+          logo_url: null,
+        });
+        return;
+      }
+
       const { data, error } = await supabase
         .from('company_settings')
         .select('company_name, logo_url')
-        .eq('id', 1)
-        .single();
+        .eq('company_id', activeCompanyId)
+        .maybeSingle();
 
       if (!active) return;
 
       if (!error && data) {
         setBranding({
-          company_name: data.company_name || 'Sabtech Online',
+          company_name: data.company_name || activeCompany?.name || 'Sabtech Online',
           logo_url: data.logo_url || null,
+        });
+      } else {
+        setBranding({
+          company_name: activeCompany?.name || 'Sabtech Online',
+          logo_url: null,
         });
       }
     }
@@ -138,7 +154,7 @@ function useCompanyBranding() {
     return () => {
       active = false;
     };
-  }, [supabase]);
+  }, [supabase, activeCompanyId, activeCompany?.name]);
 
   return branding;
 }
@@ -196,10 +212,7 @@ function SettingsSection({
 }) {
   const isInSettings = pathname.startsWith('/admin/settings');
   const [open, setOpen] = useState(isInSettings);
-
-  useEffect(() => {
-    if (isInSettings) setOpen(true);
-  }, [isInSettings]);
+  const visibleOpen = open || isInSettings;
 
   if (collapsed) {
     return (
@@ -228,11 +241,11 @@ function SettingsSection({
         <Settings className="h-5 w-5" />
         <span className="flex-1 text-left">Settings</span>
         <ChevronDown
-          className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`h-4 w-4 transition-transform ${visibleOpen ? 'rotate-180' : ''}`}
         />
       </button>
 
-      {open && (
+      {visibleOpen && (
         <div className="mt-1 space-y-1">
           {settingsNav.map(({ label, href, icon: Icon }) => {
             const isActive = pathname.startsWith(href);
@@ -337,6 +350,8 @@ export function SidebarNavContent({
         companyName={branding.company_name || 'Sabtech Online'}
         logoUrl={branding.logo_url}
       />
+
+      <WorkspaceSwitcher compact={collapsed} />
 
       <div className="flex-1 overflow-y-auto py-4">
         {mainNav.map(({ label, href, icon }) => {

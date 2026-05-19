@@ -3,9 +3,11 @@
 import Image from 'next/image';
 import { Menu } from 'lucide-react';
 import { useSidebar } from './SidebarContext';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 
 export function TopBar() {
   const { setMobileOpen } = useSidebar();
+  const { activeCompany } = useActiveCompany();
 
   return (
     <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 py-3
@@ -23,7 +25,9 @@ export function TopBar() {
       {/* Logo + Name */}
       <div className="flex items-center gap-2.5">
         <Image src="/logo.svg" alt="SAB" width={28} height={28} />
-        <span className="text-sm font-bold text-white">Sabtech Online</span>
+        <span className="max-w-[180px] truncate text-sm font-bold text-white">
+          {activeCompany?.name ?? 'Sabtech Online'}
+        </span>
       </div>
     </header>
   );

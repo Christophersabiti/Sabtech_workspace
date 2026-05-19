@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { CompanySettings } from '@/types';
 import { Building2, Save, Upload, X, CheckCircle, AlertCircle } from 'lucide-react';
 import { useRequireRole } from '@/hooks/useCurrentUser';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 
 const CURRENCIES = ['UGX', 'USD', 'EUR', 'GBP', 'KES', 'TZS', 'RWF'];
 const COUNTRIES = ['Uganda', 'Kenya', 'Tanzania', 'Rwanda', 'Ethiopia', 'South Africa', 'Nigeria', 'Ghana', 'Other'];
@@ -13,7 +14,8 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 export default function CompanySettingsPage() {
   const { checking } = useRequireRole(['super_admin', 'admin']);
-  const supabase = createClient();
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const supabase = useMemo(() => createClient(), []);
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [logoUploading, setLogoUploading] = useState(false);
@@ -37,16 +39,22 @@ export default function CompanySettingsPage() {
 
   useEffect(() => {
     async function load() {
+      if (!activeCompanyId) {
+        if (!companyLoading) setLoading(false);
+        return;
+      }
+
+      setLoading(true);
       const { data } = await supabase
         .from('company_settings')
         .select('*')
-        .eq('id', 1)
-        .single();
+        .eq('company_id', activeCompanyId)
+        .maybeSingle();
       if (data) setForm(data as CompanySettings);
       setLoading(false);
     }
     load();
-  }, []);
+  }, [activeCompanyId, companyLoading, supabase]);
 
   function set(field: keyof CompanySettings, value: string | boolean | null) {
     setForm(f => ({ ...f, [field]: value }));
@@ -59,7 +67,12 @@ export default function CompanySettingsPage() {
 
     setLogoUploading(true);
     const ext = file.name.split('.').pop();
-    const path = `logos/company-logo.${ext}`;
+    if (!activeCompanyId) {
+      alert('Select a company workspace before uploading a logo.');
+      setLogoUploading(false);
+      return;
+    }
+    const path = `${activeCompanyId}/logos/company-logo.${ext}`;
 
     const { error: upErr } = await supabase.storage
       .from('company-assets')
@@ -82,16 +95,21 @@ export default function CompanySettingsPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaveState('saving');
+    if (!activeCompanyId) {
+      setSaveState('error');
+      setTimeout(() => setSaveState('idle'), 3000);
+      return;
+    }
 
     const payload = {
       ...form,
-      id: 1,
+      company_id: activeCompanyId,
       updated_at: new Date().toISOString(),
     };
 
     const { error } = await supabase
       .from('company_settings')
-      .upsert(payload, { onConflict: 'id' });
+      .upsert(payload, { onConflict: 'company_id' });
 
     if (error) {
       setSaveState('error');
@@ -103,7 +121,7 @@ export default function CompanySettingsPage() {
   }
 
   if (checking) return <div className="py-16 text-center text-slate-400">Checking permissions…</div>;
-  if (loading) return <div className="text-center py-12 text-slate-400">Loading settings…</div>;
+  if (loading || companyLoading) return <div className="text-center py-12 text-slate-400">Loading settings…</div>;
 
   return (
     <form onSubmit={handleSave} className="max-w-3xl space-y-8">

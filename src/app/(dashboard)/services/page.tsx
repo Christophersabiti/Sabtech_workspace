@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Service } from '@/types';
 import { formatCurrency } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -15,7 +16,8 @@ const emptyForm = {
 };
 
 export default function ServicesPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [services, setServices]     = useState<Service[]>([]);
   const [loading, setLoading]       = useState(true);
   const [search, setSearch]         = useState('');
@@ -26,13 +28,29 @@ export default function ServicesPage() {
   const [form, setForm]             = useState(emptyForm);
 
   const fetchServices = useCallback(async () => {
+    if (!activeCompanyId) {
+      if (!companyLoading) {
+        setServices([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
-    const { data } = await supabase.from('services').select('*').order('category').order('service_name');
+    const { data } = await supabase
+      .from('services')
+      .select('*')
+      .eq('company_id', activeCompanyId)
+      .order('category')
+      .order('service_name');
     setServices(data || []);
     setLoading(false);
-  }, []);
+  }, [activeCompanyId, companyLoading, supabase]);
 
-  useEffect(() => { fetchServices(); }, [fetchServices]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchServices();
+  }, [fetchServices]);
 
   function openNew() { setEditService(null); setForm(emptyForm); setShowModal(true); }
 
@@ -49,8 +67,13 @@ export default function ServicesPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!form.service_code.trim() || !form.service_name.trim()) return;
+    if (!activeCompanyId) {
+      alert('Select a company workspace before saving a service.');
+      return;
+    }
     setSaving(true);
     const payload = {
+      company_id: activeCompanyId,
       service_code: form.service_code.trim().toUpperCase(),
       service_name: form.service_name.trim(),
       category: form.category.trim() || null,
@@ -59,7 +82,7 @@ export default function ServicesPage() {
       is_active: form.is_active,
     };
     const { error } = editService
-      ? await supabase.from('services').update(payload).eq('id', editService.id)
+      ? await supabase.from('services').update(payload).eq('id', editService.id).eq('company_id', activeCompanyId)
       : await supabase.from('services').insert(payload);
     if (!error) { setShowModal(false); fetchServices(); }
     else alert('Error: ' + error.message);
@@ -67,7 +90,12 @@ export default function ServicesPage() {
   }
 
   async function toggleActive(s: Service) {
-    await supabase.from('services').update({ is_active: !s.is_active }).eq('id', s.id);
+    if (!activeCompanyId) return;
+    await supabase
+      .from('services')
+      .update({ is_active: !s.is_active })
+      .eq('id', s.id)
+      .eq('company_id', activeCompanyId);
     fetchServices();
   }
 

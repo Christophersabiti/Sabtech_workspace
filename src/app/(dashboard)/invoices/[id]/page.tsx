@@ -1,12 +1,10 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { Invoice, InvoiceItem, Payment } from '@/types';
 import { formatCurrency, formatDate, PAYMENT_METHOD_LABELS } from '@/lib/utils';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ArrowLeft, Download, Printer, Plus, X, CreditCard, CheckCircle, Smartphone, Building2 } from 'lucide-react';
 
@@ -15,7 +13,7 @@ const PAYMENT_METHODS = ['bank_transfer', 'mobile_money', 'cash', 'cheque', 'onl
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -41,9 +39,12 @@ export default function InvoiceDetailPage() {
     setItems(inv_items || []);
     setPayments(pays || []);
     setLoading(false);
-  }, [id]);
+  }, [id, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
 
   async function nextPaymentNumber(): Promise<string> {
     const year = new Date().getFullYear();
@@ -51,6 +52,7 @@ export default function InvoiceDetailPage() {
     const { data: latest } = await supabase
       .from('payments')
       .select('payment_number')
+      .eq('company_id', invoice?.company_id ?? '')
       .like('payment_number', `${prefix}%`)
       .order('payment_number', { ascending: false })
       .limit(1);
@@ -64,12 +66,14 @@ export default function InvoiceDetailPage() {
 
   async function recordPayment(e: React.FormEvent) {
     e.preventDefault();
+    if (!invoice) return;
     if (!payForm.amount_paid || parseFloat(payForm.amount_paid) <= 0) return;
     setSavingPay(true);
 
     const payNum = await nextPaymentNumber();
 
     const { error } = await supabase.from('payments').insert({
+      company_id: invoice.company_id,
       payment_number: payNum,
       invoice_id: id,
       payment_date: payForm.payment_date,
@@ -91,8 +95,13 @@ export default function InvoiceDetailPage() {
   }
 
   async function markStatus(status: 'sent' | 'cancelled') {
+    if (!invoice) return;
     if (status === 'cancelled' && !confirm('Cancel this invoice? This cannot be undone easily.')) return;
-    await supabase.from('invoices').update({ status }).eq('id', id);
+    await supabase
+      .from('invoices')
+      .update({ status })
+      .eq('id', id)
+      .eq('company_id', invoice.company_id);
     load();
   }
 

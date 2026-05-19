@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { requireTenantEntityAccess } from '@/lib/authz';
 
 // ─── Company fallbacks (no sensitive data) ───────────────────────────────────
 const COMPANY_DEFAULTS = {
@@ -156,6 +157,11 @@ export async function GET(
   }
 
   const { id } = await params;
+  const access = await requireTenantEntityAccess('quotations', id);
+  if (!access.ok) {
+    return new NextResponse(access.message, { status: access.status });
+  }
+
   const isPrint = req.nextUrl.searchParams.get('print') === '1';
   const supabase = getSupabase();
 
@@ -166,10 +172,15 @@ export async function GET(
       .eq('id', id)
       .order('sort_order', { referencedTable: 'quotation_items', ascending: true })
       .single(),
-    supabase.from('company_settings').select('*').eq('id', 1).single(),
+    supabase
+      .from('company_settings')
+      .select('*')
+      .eq('company_id', access.companyId)
+      .maybeSingle(),
     supabase
       .from('payment_methods')
       .select('*')
+      .eq('company_id', access.companyId)
       .eq('is_active', true)
       .eq('show_on_invoice', true)
       .order('display_order', { ascending: true }),

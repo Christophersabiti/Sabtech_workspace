@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRequireRole } from '@/hooks/useCurrentUser';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { PaymentMethodDB, PaymentMethodType } from '@/types';
 import {
   Plus, Pencil, Trash2, Eye, EyeOff, GripVertical,
@@ -43,7 +44,7 @@ const METHOD_COLORS: Record<PaymentMethodType, string> = {
   other:         'bg-slate-100 text-slate-600',
 };
 
-const EMPTY_FORM: Omit<PaymentMethodDB, 'id' | 'created_at' | 'updated_at'> = {
+const EMPTY_FORM: Omit<PaymentMethodDB, 'id' | 'company_id' | 'created_at' | 'updated_at'> = {
   method_type: 'mobile_money',
   display_name: '',
   account_name: '',
@@ -62,7 +63,8 @@ const EMPTY_FORM: Omit<PaymentMethodDB, 'id' | 'created_at' | 'updated_at'> = {
 
 export default function PaymentMethodsPage() {
   const { checking } = useRequireRole(['super_admin', 'admin']);
-  const supabase = createClient();
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const supabase = useMemo(() => createClient(), []);
   const [methods, setMethods] = useState<PaymentMethodDB[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -77,16 +79,28 @@ export default function PaymentMethodsPage() {
   };
 
   const load = useCallback(async () => {
+    if (!activeCompanyId) {
+      if (!companyLoading) {
+        setMethods([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     const { data } = await supabase
       .from('payment_methods')
       .select('*')
+      .eq('company_id', activeCompanyId)
       .order('display_order');
     setMethods((data || []) as PaymentMethodDB[]);
     setLoading(false);
-  }, []);
+  }, [activeCompanyId, companyLoading, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
 
   function openAdd() {
     setEditing(null);
@@ -118,9 +132,14 @@ export default function PaymentMethodsPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!form.display_name.trim()) return;
+    if (!activeCompanyId) {
+      showToast('error', 'Select a company workspace first.');
+      return;
+    }
     setSaving(true);
 
     const payload = {
+      company_id: activeCompanyId,
       ...form,
       account_name:   form.account_name   || null,
       account_number: form.account_number || null,
@@ -134,7 +153,7 @@ export default function PaymentMethodsPage() {
     };
 
     const { error } = editing
-      ? await supabase.from('payment_methods').update(payload).eq('id', editing.id)
+      ? await supabase.from('payment_methods').update(payload).eq('id', editing.id).eq('company_id', activeCompanyId)
       : await supabase.from('payment_methods').insert(payload);
 
     if (error) {
@@ -149,13 +168,18 @@ export default function PaymentMethodsPage() {
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this payment method?')) return;
-    const { error } = await supabase.from('payment_methods').delete().eq('id', id);
+    if (!activeCompanyId) return;
+    const { error } = await supabase.from('payment_methods').delete().eq('id', id).eq('company_id', activeCompanyId);
     if (error) showToast('error', error.message);
     else { showToast('success', 'Deleted.'); load(); }
   }
 
   async function toggleField(id: string, field: 'is_active' | 'show_on_invoice', current: boolean) {
-    await supabase.from('payment_methods').update({ [field]: !current, updated_at: new Date().toISOString() }).eq('id', id);
+    if (!activeCompanyId) return;
+    await supabase.from('payment_methods')
+      .update({ [field]: !current, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('company_id', activeCompanyId);
     load();
   }
 
@@ -169,6 +193,7 @@ export default function PaymentMethodsPage() {
   const showSwift   = f.method_type === 'wire_transfer';
 
   if (checking) return <div className="py-16 text-center text-slate-400">Checking permissions…</div>;
+  if (companyLoading) return <div className="py-16 text-center text-slate-400">Loading workspace…</div>;
 
   return (
     <div className="max-w-4xl">

@@ -1,11 +1,11 @@
 export const dynamic = 'force-dynamic';
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
-export async function POST(req: NextRequest) {
+export async function POST() {
   const cookieStore = await cookies();
   const authClient = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -52,8 +52,10 @@ export async function POST(req: NextRequest) {
     .eq('auth_user_id', session.user.id)
     .single();
 
+  let appUserId = existing?.id as string | undefined;
+
   if (!existing) {
-    await adminSupabase.from('app_users').insert({
+    const { data: createdUser, error: createUserError } = await adminSupabase.from('app_users').insert({
       auth_user_id: session.user.id,
       email: userEmail,
       full_name: session.user.user_metadata?.full_name ?? null,
@@ -63,7 +65,13 @@ export async function POST(req: NextRequest) {
       invited_by: invitation.invited_by,
       invited_at: invitation.created_at,
       last_login_at: new Date().toISOString(),
-    });
+    }).select('id').single();
+
+    if (createUserError) {
+      return NextResponse.json({ error: createUserError.message }, { status: 500 });
+    }
+
+    appUserId = createdUser?.id;
   } else {
     // Update role from invitation
     await adminSupabase
@@ -71,6 +79,22 @@ export async function POST(req: NextRequest) {
       .update({ role: invitation.role, status: 'active', last_login_at: new Date().toISOString() })
       .eq('id', existing.id);
   }
+
+  if (!appUserId) {
+    return NextResponse.json({ error: 'Could not resolve app user for invitation' }, { status: 500 });
+  }
+
+  await adminSupabase
+    .from('company_users')
+    .upsert({
+      company_id: invitation.company_id,
+      app_user_id: appUserId,
+      auth_user_id: session.user.id,
+      role_id: invitation.role,
+      status: 'active',
+      invited_by: invitation.invited_by,
+      joined_at: new Date().toISOString(),
+    }, { onConflict: 'company_id,auth_user_id' });
 
   // Mark invitation accepted
   await adminSupabase

@@ -35,6 +35,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden — admin access required' }, { status: 403 });
   }
 
+  const { data: membership } = await authClient
+    .from('company_users')
+    .select('company_id, role_id')
+    .eq('app_user_id', appUser.id)
+    .eq('status', 'active')
+    .in('role_id', ['super_admin', 'admin'])
+    .limit(1)
+    .single();
+
+  if (!membership?.company_id) {
+    return NextResponse.json({ error: 'Forbidden - no active company admin membership found' }, { status: 403 });
+  }
+
   const body = await req.json();
   const { email } = body as { email: string };
 
@@ -51,13 +64,15 @@ export async function POST(req: NextRequest) {
   const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL ?? req.nextUrl.origin}/auth/callback`;
   
   // Generate the Magic Link / Invite Link without sending the email via Supabase default
-  let { data: linkData, error: linkErr } = await adminSupabase.auth.admin.generateLink({
+  const generatedLink = await adminSupabase.auth.admin.generateLink({
     type: 'invite',
     email: email.toLowerCase().trim(),
     options: {
       redirectTo
     }
   });
+  let linkData = generatedLink.data;
+  const linkErr = generatedLink.error;
 
   // If the user already exists in auth.users (because an email invite was run or they signed up before),
   // generating an invite link throws "already registered". We fallback to generating a regular magic link 

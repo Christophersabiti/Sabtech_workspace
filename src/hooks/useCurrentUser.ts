@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 
 export type CurrentUser = {
   id:           string;   // app_users.id
@@ -29,7 +30,8 @@ export type AdminRole   = typeof ADMIN_ROLES[number];
  *   if (can('void_invoice')) { ... }
  */
 export function useCurrentUser() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId } = useActiveCompany();
   const [user, setUser]       = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -48,6 +50,15 @@ export function useCurrentUser() {
 
       if (!active) return;
 
+      const { data: membership } = appUser && activeCompanyId
+        ? await supabase
+            .from('company_users')
+            .select('role_id, status')
+            .eq('app_user_id', appUser.id)
+            .eq('company_id', activeCompanyId)
+            .maybeSingle()
+        : { data: null };
+
       if (appUser) {
         setUser({
           id:        appUser.id,
@@ -55,8 +66,8 @@ export function useCurrentUser() {
           email:     appUser.email,
           fullName:  appUser.full_name,
           avatarUrl: appUser.avatar_url,
-          role:      appUser.role,
-          status:    appUser.status,
+          role:      membership?.role_id ?? appUser.role,
+          status:    membership?.status ?? appUser.status,
         });
       } else {
         // Fallback: build from session if app_users record doesn't exist yet
@@ -75,7 +86,7 @@ export function useCurrentUser() {
 
     load();
     return () => { active = false; };
-  }, []);
+  }, [activeCompanyId, supabase]);
 
   /**
    * Permission check helper.
@@ -111,18 +122,15 @@ export function useRequireRole(
 ): { checking: boolean } {
   const router = useRouter();
   const { user, loading } = useCurrentUser();
-  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     if (loading) return;
     if (!user || !allowedRoles.includes(user.role)) {
       router.replace(redirectTo);
-    } else {
-      setChecking(false);
     }
   }, [user, loading, allowedRoles, redirectTo, router]);
 
-  return { checking: loading || checking };
+  return { checking: loading || !user || !allowedRoles.includes(user.role) };
 }
 
 // ─── Permission Matrix ────────────────────────────────────────────────────────

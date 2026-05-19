@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -37,7 +37,7 @@ type FullQuotation = Quotation & {
 export default function QuotationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const [quotation, setQuotation]       = useState<FullQuotation | null>(null);
   const [projects, setProjects]         = useState<Project[]>([]);
@@ -69,19 +69,24 @@ export default function QuotationDetailPage() {
     }
     setQuotation(data as FullQuotation);
     setLoading(false);
-  }, [id]);
+  }, [id, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
 
   // Load projects for the "Convert to Tasks" project picker
   useEffect(() => {
+    if (!quotation?.company_id) return;
     supabase
       .from('projects')
       .select('id, project_name, project_code, status')
+      .eq('company_id', quotation.company_id)
       .eq('status', 'active')
       .order('project_name')
       .then(({ data }) => setProjects((data || []) as Project[]));
-  }, []);
+  }, [quotation?.company_id, supabase]);
 
   // ── Status change ────────────────────────────────────────────────────────────
   async function changeStatus(newStatus: QuotationStatus) {
@@ -90,7 +95,8 @@ export default function QuotationDetailPage() {
     const { error: err } = await supabase
       .from('quotations')
       .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', quotation.id);
+      .eq('id', quotation.id)
+      .eq('company_id', quotation.company_id);
     if (err) { showToast(err.message, false); }
     else {
       setQuotation(q => q ? { ...q, status: newStatus } : q);
@@ -110,6 +116,7 @@ export default function QuotationDetailPage() {
     const tasks = quotation.quotation_items
       .filter(it => it.item_name.trim())
       .map(it => ({
+        company_id:        quotation.company_id,
         project_id:        selectedProject,
         quotation_id:      quotation.id,
         quotation_item_id: it.id,
@@ -131,7 +138,8 @@ export default function QuotationDetailPage() {
     await supabase
       .from('quotations')
       .update({ status: 'converted', updated_at: new Date().toISOString() })
-      .eq('id', quotation.id);
+      .eq('id', quotation.id)
+      .eq('company_id', quotation.company_id);
 
     setQuotation(q => q ? { ...q, status: 'converted' } : q);
     showToast(`${tasks.length} task${tasks.length !== 1 ? 's' : ''} created successfully.`, true);

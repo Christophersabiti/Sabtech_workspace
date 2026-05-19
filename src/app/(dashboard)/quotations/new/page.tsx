@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Client } from '@/types';
 import { formatCurrency } from '@/lib/utils';
 import { ArrowLeft, Plus, Trash2, Save, Send } from 'lucide-react';
@@ -30,12 +31,16 @@ function emptyItem(): LineItem {
   };
 }
 
-async function fetchNextQuotationNumber(supabase: ReturnType<typeof createClient>): Promise<string> {
+async function fetchNextQuotationNumber(
+  supabase: ReturnType<typeof createClient>,
+  companyId: string,
+): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `QUO-${year}-`;
   const { data } = await supabase
     .from('quotations')
     .select('quotation_number')
+    .eq('company_id', companyId)
     .like('quotation_number', `${prefix}%`)
     .order('quotation_number', { ascending: false })
     .limit(1);
@@ -50,21 +55,29 @@ async function fetchNextQuotationNumber(supabase: ReturnType<typeof createClient
 export default function NewQuotationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
 
   const [clients, setClients]       = useState<Client[]>([]);
   const [saving, setSaving]         = useState(false);
   const [errorMsg, setErrorMsg]     = useState('');
 
   // Header fields
-  const today = new Date().toISOString().slice(0, 10);
-  const inThirty = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10);
+  const [initialDates] = useState(() => {
+    const issueDate = new Date();
+    const validUntil = new Date(issueDate);
+    validUntil.setDate(validUntil.getDate() + 30);
+    return {
+      today: issueDate.toISOString().slice(0, 10),
+      inThirty: validUntil.toISOString().slice(0, 10),
+    };
+  });
 
   const [header, setHeader] = useState({
     client_id:    searchParams.get('client') ?? '',
     project_name: '',
-    issue_date:   today,
-    valid_until:  inThirty,
+    issue_date:   initialDates.today,
+    valid_until:  initialDates.inThirty,
     currency:     'UGX',
     notes:        '',
     discount:     0,
@@ -76,19 +89,23 @@ export default function NewQuotationPage() {
 
   // Load clients
   useEffect(() => {
-    supabase.from('clients').select('id, name, currency, status').eq('status', 'active').order('name')
+    if (!activeCompanyId) return;
+    supabase
+      .from('clients')
+      .select('id, company_id, name, currency, status')
+      .eq('company_id', activeCompanyId)
+      .eq('status', 'active')
+      .order('name')
       .then(({ data }) => setClients((data || []) as Client[]));
-  }, []);
-
-  // Auto-set currency when client changes
-  useEffect(() => {
-    if (!header.client_id) return;
-    const c = clients.find(cl => cl.id === header.client_id);
-    if (c) setHeader(h => ({ ...h, currency: c.currency }));
-  }, [header.client_id, clients]);
+  }, [activeCompanyId, supabase]);
 
   const patchHeader = <K extends keyof typeof header>(k: K, v: (typeof header)[K]) =>
     setHeader(h => ({ ...h, [k]: v }));
+
+  function selectClient(clientId: string) {
+    const client = clients.find(cl => cl.id === clientId);
+    setHeader(h => ({ ...h, client_id: clientId, currency: client?.currency ?? h.currency }));
+  }
 
   // Line item helpers
   function patchItem(id: string, field: keyof LineItem, raw: string | number) {
@@ -110,16 +127,19 @@ export default function NewQuotationPage() {
 
   // Save
   const handleSave = useCallback(async (status: 'draft' | 'sent') => {
+    if (companyLoading) return;
+    if (!activeCompanyId) { setErrorMsg('Select a company workspace before creating a quotation.'); return; }
     if (!header.client_id) { setErrorMsg('Please select a client.'); return; }
     if (items.every(it => !it.item_name.trim())) { setErrorMsg('Add at least one item.'); return; }
     setErrorMsg('');
     setSaving(true);
 
-    const quotationNumber = await fetchNextQuotationNumber(supabase);
+    const quotationNumber = await fetchNextQuotationNumber(supabase, activeCompanyId);
 
     const { data: quot, error: qErr } = await supabase
       .from('quotations')
       .insert({
+        company_id: activeCompanyId,
         quotation_number: quotationNumber,
         client_id:    header.client_id || null,
         project_name: header.project_name,
@@ -146,6 +166,7 @@ export default function NewQuotationPage() {
       .filter(it => it.item_name.trim())
       .map((it, i) => ({
         quotation_id: quot.id,
+        company_id: activeCompanyId,
         item_name:    it.item_name.trim(),
         description:  it.description.trim() || null,
         quantity:     it.quantity,
@@ -164,7 +185,7 @@ export default function NewQuotationPage() {
     }
 
     router.push(`/quotations/${quot.id}`);
-  }, [header, items, subtotal, taxAmount, total, supabase, router]);
+  }, [activeCompanyId, companyLoading, header, items, subtotal, taxAmount, total, supabase, router]);
 
   const inputCls = 'w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
 
@@ -187,7 +208,7 @@ export default function NewQuotationPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Client <span className="text-red-500">*</span></label>
-            <select value={header.client_id} onChange={e => patchHeader('client_id', e.target.value)} className={inputCls}>
+            <select value={header.client_id} onChange={e => selectClient(e.target.value)} className={inputCls}>
               <option value="">— Select client —</option>
               {clients.map(c => <option key={c.id} value={c.id}>{c.name}{c.company_name ? ` (${c.company_name})` : ''}</option>)}
             </select>
