@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
         const { data: createdUser } = await adminSupabase.from('app_users').insert({
           auth_user_id: session.user.id,
           email: session.user.email ?? '',
-          full_name: session.user.user_metadata?.full_name ?? session.user.user_metadata?.name ?? null,
+          full_name: invitation?.full_name ?? session.user.user_metadata?.full_name ?? session.user.user_metadata?.name ?? null,
           avatar_url: session.user.user_metadata?.avatar_url ?? null,
           role: 'staff',
           status: 'active',

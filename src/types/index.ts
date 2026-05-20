@@ -186,6 +186,43 @@ export type PaymentAuditLog = {
   metadata: Record<string, unknown> | null;
 };
 
+export type ExpenseRecurrence = 'one_off' | 'monthly' | 'annual';
+export type ExpenseStatus = 'pending' | 'approved' | 'rejected' | 'paid';
+
+export type ExpenseCategory = {
+  id: string;
+  company_id: string;
+  name: string;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Expense = {
+  id: string;
+  company_id: string;
+  client_id: string | null;
+  project_id: string | null;
+  category_id: string | null;
+  amount: number;
+  currency: string;
+  expense_date: string;
+  vendor: string | null;
+  description: string | null;
+  receipt_url: string | null;
+  recurrence: ExpenseRecurrence;
+  is_system_subscription: boolean;
+  renewal_date: string | null;
+  created_by: string | null;
+  approved_by: string | null;
+  status: ExpenseStatus;
+  created_at: string;
+  updated_at: string;
+  client?: { name: string; company_name: string | null } | null;
+  project?: { project_name: string } | null;
+  category?: { name: string } | null;
+};
+
 // Extended project with calculated invoice totals (from project_totals view)
 export type ProjectWithTotals = Project & {
   total_invoiced: number;

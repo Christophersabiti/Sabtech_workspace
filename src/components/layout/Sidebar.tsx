@@ -22,6 +22,7 @@ import {
   ChevronDown,
   LogOut,
   ClipboardList,
+  ReceiptText,
   ShieldCheck,
 } from 'lucide-react';
 import { useState, useEffect, useMemo, ElementType } from 'react';
@@ -39,6 +40,7 @@ const mainNav = [
   { label: 'Services',    href: '/services',     icon: Tag },
   { label: 'Invoices',    href: '/invoices',     icon: FileText },
   { label: 'Payments',    href: '/payments',     icon: CreditCard },
+  { label: 'Expenses',    href: '/expenses',     icon: ReceiptText },
   { label: 'Reports',     href: '/reports',      icon: BarChart2 },
 ];
 

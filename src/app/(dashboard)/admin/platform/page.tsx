@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -14,6 +14,7 @@ import {
   LogOut,
   Plus,
   Search,
+  Send,
   Shield,
   ShieldCheck,
   Users,
@@ -27,6 +28,12 @@ type PlatformCompany = {
   name: string;
   slug: string;
   status: string;
+  email: string | null;
+  plan: string | null;
+  domain: string | null;
+  primary_contact_name: string | null;
+  primary_contact_email: string | null;
+  last_activity_at: string | null;
   created_at: string;
   member_count: number;
 };
@@ -62,33 +69,96 @@ export default function PlatformAdminPage() {
   const [stopOpen, setStopOpen] = useState(false);
   const [stopReason, setStopReason] = useState('');
   const [stopping, setStopping] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    companyName: '',
+    slug: '',
+    companyEmail: '',
+    plan: 'starter',
+    status: 'active',
+    domain: '',
+    primaryContactName: '',
+    adminFullName: '',
+    adminEmail: '',
+  });
+
+  const loadCompanies = useCallback(async () => {
+    setLoading(true);
+    const res = await fetch('/api/platform/companies');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setToast({ type: 'error', message: data.error ?? 'Platform Admin access required.' });
+      setCompanies([]);
+    } else {
+      setCompanies(data.companies ?? []);
+    }
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    async function load() {
-      setLoading(true);
-      const res = await fetch('/api/platform/companies');
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setToast({ type: 'error', message: data.error ?? 'Platform Admin access required.' });
-        setCompanies([]);
-      } else {
-        setCompanies(data.companies ?? []);
-      }
-      setLoading(false);
-    }
-
-    void load();
-  }, []);
+    void Promise.resolve().then(loadCompanies);
+  }, [loadCompanies]);
 
   const filteredCompanies = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return companies;
     return companies.filter((company) =>
-      [company.name, company.slug, company.status].some((value) =>
-        value.toLowerCase().includes(term),
+      [company.name, company.slug, company.status, company.email, company.plan].some((value) =>
+        (value ?? '').toLowerCase().includes(term),
       ),
     );
   }, [companies, search]);
+
+  function updateCreateForm(field: keyof typeof createForm, value: string) {
+    setCreateForm((current) => {
+      const next = { ...current, [field]: value };
+      if (field === 'companyName' && !current.slug) {
+        next.slug = value
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+      }
+      if (field === 'adminFullName' && !current.primaryContactName) {
+        next.primaryContactName = value;
+      }
+      return next;
+    });
+  }
+
+  async function createCompanyWithAdmin(event: React.FormEvent) {
+    event.preventDefault();
+    setCreating(true);
+    const res = await fetch('/api/platform/companies/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(createForm),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setToast({ type: 'error', message: data.error ?? 'Could not create company.' });
+      setCreating(false);
+      return;
+    }
+
+    setCreateOpen(false);
+    setCreateForm({
+      companyName: '',
+      slug: '',
+      companyEmail: '',
+      plan: 'starter',
+      status: 'active',
+      domain: '',
+      primaryContactName: '',
+      adminFullName: '',
+      adminEmail: '',
+    });
+    setToast({ type: 'success', message: 'Company created and admin invite sent.' });
+    await loadCompanies();
+    setCreating(false);
+  }
 
   async function startImpersonation() {
     if (!selectedCompany || reason.trim().length < 10) return;
@@ -175,7 +245,7 @@ export default function PlatformAdminPage() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => router.push('/onboarding/company')}
+            onClick={() => setCreateOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             <Plus className="h-4 w-4" />
@@ -272,20 +342,22 @@ export default function PlatformAdminPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-5 py-3">Name</th>
                   <th className="px-5 py-3">Slug</th>
+                  <th className="px-5 py-3">Plan</th>
                   <th className="px-5 py-3">Users</th>
                   <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3">Contact</th>
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredCompanies.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-5 py-12 text-center">
+                    <td colSpan={7} className="px-5 py-12 text-center">
                       <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-50 text-slate-300">
                         <Building2 className="h-6 w-6" />
                       </div>
@@ -311,6 +383,11 @@ export default function PlatformAdminPage() {
                     </td>
                     <td className="px-5 py-4 text-slate-600">{company.slug}</td>
                     <td className="px-5 py-4">
+                      <span className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold capitalize text-slate-700">
+                        {company.plan ?? 'starter'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">
                       <span className="inline-flex items-center gap-1 text-slate-600">
                         <Users className="h-4 w-4 text-slate-400" />
                         {company.member_count}
@@ -326,6 +403,10 @@ export default function PlatformAdminPage() {
                       >
                         {company.status}
                       </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <p className="font-medium text-slate-700">{company.primary_contact_name ?? 'Not set'}</p>
+                      <p className="text-xs text-slate-400">{company.primary_contact_email ?? company.email ?? 'No email'}</p>
                     </td>
                     <td className="px-5 py-4 text-right">
                       <div className="flex justify-end gap-2">
@@ -479,6 +560,144 @@ export default function PlatformAdminPage() {
             </div>
           </div>
         </section>
+      )}
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Create Company and Admin</h2>
+                <p className="text-sm text-slate-500">
+                  Super Admin creates the tenant and invites the first company administrator.
+                </p>
+              </div>
+              <button onClick={() => setCreateOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={createCompanyWithAdmin}>
+              <div className="grid gap-4 p-5 md:grid-cols-2">
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Company Name</span>
+                  <input
+                    required
+                    value={createForm.companyName}
+                    onChange={(event) => updateCreateForm('companyName', event.target.value)}
+                    placeholder="Cas Services"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Slug</span>
+                  <input
+                    required
+                    value={createForm.slug}
+                    onChange={(event) => updateCreateForm('slug', event.target.value)}
+                    placeholder="cas-services"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Company Email</span>
+                  <input
+                    required
+                    type="email"
+                    value={createForm.companyEmail}
+                    onChange={(event) => updateCreateForm('companyEmail', event.target.value)}
+                    placeholder="accounts@company.com"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Plan</span>
+                  <select
+                    value={createForm.plan}
+                    onChange={(event) => updateCreateForm('plan', event.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="starter">Starter</option>
+                    <option value="growth">Growth</option>
+                    <option value="pro">Pro</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Status</span>
+                  <select
+                    value={createForm.status}
+                    onChange={(event) => updateCreateForm('status', event.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </label>
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Domain or Subdomain</span>
+                  <input
+                    value={createForm.domain}
+                    onChange={(event) => updateCreateForm('domain', event.target.value)}
+                    placeholder="cas.sabtechonline.com"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <div className="md:col-span-2 border-t border-slate-100 pt-4">
+                  <h3 className="text-sm font-semibold text-slate-900">First Company Admin</h3>
+                  <p className="text-xs text-slate-500">This user receives the secure invite and joins only this company.</p>
+                </div>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Admin Full Name</span>
+                  <input
+                    required
+                    value={createForm.adminFullName}
+                    onChange={(event) => updateCreateForm('adminFullName', event.target.value)}
+                    placeholder="Jane Admin"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Admin Email</span>
+                  <input
+                    required
+                    type="email"
+                    value={createForm.adminEmail}
+                    onChange={(event) => updateCreateForm('adminEmail', event.target.value)}
+                    placeholder="admin@company.com"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Primary Contact</span>
+                  <input
+                    value={createForm.primaryContactName}
+                    onChange={(event) => updateCreateForm('primaryContactName', event.target.value)}
+                    placeholder="Jane Admin"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+              </div>
+              <div className="flex gap-3 border-t border-slate-100 p-5">
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(false)}
+                  className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  {creating ? 'Creating...' : 'Create and Invite Admin'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {selectedCompany && (

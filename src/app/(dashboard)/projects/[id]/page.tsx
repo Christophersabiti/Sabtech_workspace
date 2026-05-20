@@ -181,6 +181,17 @@ function buildTaskUploadRows(text: string): { rows: TaskUploadRow[]; error: stri
   return { rows, error: null };
 }
 
+function sortTasksByStartDateDesc(taskList: ProjectTask[]) {
+  return [...taskList].sort((a, b) => {
+    const aDate = a.start_date ?? '';
+    const bDate = b.start_date ?? '';
+    if (aDate && bDate && aDate !== bDate) return bDate.localeCompare(aDate);
+    if (aDate && !bDate) return -1;
+    if (!aDate && bDate) return 1;
+    return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+  });
+}
+
 export default function ProjectProfilePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -266,12 +277,13 @@ export default function ProjectProfilePage() {
         .select('*')
         .eq('project_id', id)
         .eq('company_id', activeCompanyId)
-        .order('created_at', { ascending: true }),
+        .order('start_date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }),
     ]);
     setProject(proj as Project & { client: Client });
     setInvoices(inv || []);
     setSchedules(sched || []);
-    setTasks((tsk || []) as ProjectTask[]);
+    setTasks(sortTasksByStartDateDesc((tsk || []) as ProjectTask[]));
     setLoading(false);
   }, [activeCompanyId, companyLoading, id, supabase]);
 
@@ -428,7 +440,7 @@ export default function ProjectProfilePage() {
         .eq('id', editingTask.id)
         .eq('company_id', project.company_id);
       if (!error) {
-        setTasks(ts => ts.map(t => t.id === editingTask.id ? { ...t, ...payload } : t));
+        setTasks(ts => sortTasksByStartDateDesc(ts.map(t => t.id === editingTask.id ? { ...t, ...payload } : t)));
       }
     } else {
       const { data, error } = await supabase
@@ -437,7 +449,7 @@ export default function ProjectProfilePage() {
         .select()
         .single();
       if (!error && data) {
-        setTasks(ts => [...ts, data as ProjectTask]);
+        setTasks(ts => sortTasksByStartDateDesc([...ts, data as ProjectTask]));
       }
     }
 
@@ -471,7 +483,7 @@ export default function ProjectProfilePage() {
     if (error) {
       setTaskUploadError(error.message);
     } else {
-      setTasks(ts => [...ts, ...((data || []) as ProjectTask[])]);
+      setTasks(ts => sortTasksByStartDateDesc([...ts, ...((data || []) as ProjectTask[])]));
       setShowTaskUpload(false);
       setProjectToast({ msg: `${validRows.length} task${validRows.length === 1 ? '' : 's'} uploaded successfully.`, ok: true });
       setTimeout(() => setProjectToast(null), 3000);
@@ -482,7 +494,7 @@ export default function ProjectProfilePage() {
 
   async function updateTaskStatus(taskId: string, newStatus: TaskStatus) {
     if (!project) return;
-    setTasks(ts => ts.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+    setTasks(ts => sortTasksByStartDateDesc(ts.map(t => t.id === taskId ? { ...t, status: newStatus } : t)));
     await supabase
       .from('project_tasks')
       .update({ status: newStatus, updated_at: new Date().toISOString() })

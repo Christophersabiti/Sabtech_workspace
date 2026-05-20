@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { Eye, EyeOff, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { Suspense } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 
 // Google SVG icon
 function GoogleIcon() {
@@ -166,6 +167,11 @@ function LoginForm() {
                   {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+            </div>
+            <div className="-mt-2 text-right">
+              <Link href="/forgot-password" className="text-xs font-medium text-purple-600 hover:text-purple-700">
+                Forgot password?
+              </Link>
             </div>
             <button
               type="submit"

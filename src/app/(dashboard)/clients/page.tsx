@@ -72,13 +72,17 @@ export default function ClientsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [editingClient, setEditingClient] = useState<ClientWithStats | null>(null);
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
+    setLoadWarning(null);
+
     if (!activeCompanyId) {
       if (!companyLoading) {
         setClients([]);
         setLoading(false);
+        setLoadWarning('No active company workspace is selected. Enter a company from Platform Admin or complete company onboarding.');
       }
       return;
     }
@@ -103,7 +107,7 @@ export default function ClientsPage() {
         })),
       );
     } else {
-      const { data } = await supabase.rpc('get_clients_filtered', {
+      const { data, error } = await supabase.rpc('get_clients_filtered', {
         p_company_id: activeCompanyId,
         p_search: filters.search || null,
         p_status: filters.status || null,
@@ -112,7 +116,49 @@ export default function ClientsPage() {
         p_currency: filters.currency || null,
       });
 
-      setClients((data || []) as ClientWithStats[]);
+      const shouldCheckFallback =
+        !error
+        && (data || []).length === 0
+        && !filters.search
+        && !filters.status
+        && !filters.currency
+        && filters.hasOverdue === null
+        && filters.hasActiveProjects === null;
+
+      if (error || shouldCheckFallback) {
+        if (!error && shouldCheckFallback) {
+          console.warn('Client stats RPC returned no rows. Checking direct tenant clients query.');
+        } else {
+          console.error('Failed to load client stats. Falling back to tenant-scoped clients query:', error);
+        }
+
+        const { data: fallbackClients, error: fallbackError } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('company_id', activeCompanyId)
+          .eq('is_archived', false)
+          .order('name');
+
+        if (fallbackError) {
+          console.error('Failed to load clients fallback:', fallbackError);
+          setLoadWarning(fallbackError.message);
+          setClients([]);
+        } else {
+          if ((fallbackClients || []).length > 0) {
+            setLoadWarning('Client totals are temporarily unavailable. Showing tenant clients without financial stats.');
+          }
+          setClients(
+            ((fallbackClients || []) as ClientWithStats[]).map(c => ({
+              ...c,
+              active_projects: 0,
+              total_outstanding: 0,
+              has_overdue: false,
+            })),
+          );
+        }
+      } else {
+        setClients((data || []) as ClientWithStats[]);
+      }
     }
 
     setLoading(false);
@@ -238,6 +284,12 @@ export default function ClientsPage() {
           <Download className="h-4 w-4" /> Export CSV
         </button>
       </div>
+
+      {loadWarning && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {loadWarning}
+        </div>
+      )}
 
       {/* Filter panel */}
       {showFilters && !showArchived && (

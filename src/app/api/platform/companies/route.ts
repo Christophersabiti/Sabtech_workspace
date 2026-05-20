@@ -13,7 +13,7 @@ export async function GET() {
   const [{ data: companies, error }, { data: memberships }] = await Promise.all([
     adminSupabase
       .from('companies')
-      .select('id, name, slug, status, created_at')
+      .select('id, name, slug, status, email, plan, domain, primary_contact_name, primary_contact_email, last_activity_at, created_at')
       .order('created_at', { ascending: false }),
     adminSupabase
       .from('company_users')
