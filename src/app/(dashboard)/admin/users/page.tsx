@@ -243,11 +243,25 @@ export default function UsersPage() {
             <Loader2 className="h-5 w-5 animate-spin" /> Loading users…
           </div>
         ) : filtered.length === 0 ? (
-          <div className="py-16 text-center">
-            <UserCog className="h-10 w-10 text-slate-200 mx-auto mb-3" />
-            <p className="text-slate-400 font-medium">
+          <div className="px-6 py-16 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-50 text-purple-500">
+              <UserCog className="h-7 w-7" />
+            </div>
+            <p className="text-base font-semibold text-slate-700">
               {users.length === 0 ? 'No users yet. Invite your first team member.' : 'No users match your filter.'}
             </p>
+            <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
+              Company users are isolated to this workspace. Invite an admin, finance user, project manager, or staff member to begin.
+            </p>
+            {users.length === 0 && (
+              <button
+                onClick={() => setShowInvite(true)}
+                className="mt-5 inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700"
+              >
+                <Plus className="h-4 w-4" />
+                Invite First User
+              </button>
+            )}
           </div>
         ) : (
           <table className="w-full text-sm">

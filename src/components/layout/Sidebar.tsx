@@ -27,6 +27,7 @@ import {
 import { useState, useEffect, useMemo, ElementType } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { usePlatformImpersonation } from '@/hooks/usePlatformImpersonation';
 import { useSidebar } from './SidebarContext';
 import { NavItem } from './NavItem';
 
@@ -129,7 +130,9 @@ function useCurrentUserInfo() {
 
 function useCompanyBranding() {
   const supabase = useMemo(() => createClient(), []);
+  const pathname = usePathname();
   const { activeCompanyId, activeCompany } = useActiveCompany();
+  const { impersonation } = usePlatformImpersonation();
   const [branding, setBranding] = useState<CompanyBranding>({
     company_name: 'Sabtech Online',
     logo_url: null,
@@ -139,6 +142,22 @@ function useCompanyBranding() {
     let active = true;
 
     async function loadBranding() {
+      if (pathname.startsWith('/admin/platform') && !impersonation) {
+        setBranding({
+          company_name: 'Sabtech Online',
+          logo_url: null,
+        });
+        return;
+      }
+
+      if (impersonation) {
+        setBranding({
+          company_name: impersonation.companyName,
+          logo_url: null,
+        });
+        return;
+      }
+
       if (!activeCompanyId) {
         setBranding({
           company_name: activeCompany?.name ?? 'Sabtech Online',
@@ -172,7 +191,7 @@ function useCompanyBranding() {
     return () => {
       active = false;
     };
-  }, [supabase, activeCompanyId, activeCompany?.name]);
+  }, [activeCompany?.name, activeCompanyId, impersonation, pathname, supabase]);
 
   return branding;
 }

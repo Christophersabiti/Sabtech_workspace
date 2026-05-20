@@ -5,20 +5,22 @@ import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   Building2,
+  CalendarDays,
   CheckCircle,
+  CreditCard,
   DoorOpen,
   Globe2,
   Loader2,
   LogOut,
   Plus,
   Search,
+  Shield,
   ShieldCheck,
   Users,
   X,
 } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
-
-const IMPERSONATION_KEY = 'sabtech_platform_impersonation';
+import { usePlatformImpersonation } from '@/hooks/usePlatformImpersonation';
 
 type PlatformCompany = {
   id: string;
@@ -29,29 +31,27 @@ type PlatformCompany = {
   member_count: number;
 };
 
-type ImpersonationState = {
-  sessionId: string;
-  companyId: string;
-  companyName: string;
-  startedAt: string;
-};
+type PlatformTab = 'companies' | 'users' | 'admins' | 'billing';
 
-function getStoredImpersonation(): ImpersonationState | null {
-  if (typeof window === 'undefined') return null;
-  const raw = window.localStorage.getItem(IMPERSONATION_KEY);
-  if (!raw) return null;
+const PLATFORM_TABS: Array<{ id: PlatformTab; label: string; icon: typeof Building2 }> = [
+  { id: 'companies', label: 'Companies', icon: Building2 },
+  { id: 'users', label: 'Users', icon: Users },
+  { id: 'admins', label: 'Super Admins', icon: Shield },
+  { id: 'billing', label: 'Billing', icon: CreditCard },
+];
 
-  try {
-    return JSON.parse(raw) as ImpersonationState;
-  } catch {
-    window.localStorage.removeItem(IMPERSONATION_KEY);
-    return null;
-  }
-}
+const DEFAULT_PLANS = [
+  { name: 'Starter', key: 'starter', monthly: 'UGX 75,000', users: 'Up to 3', status: 'active' },
+  { name: 'Growth', key: 'growth', monthly: 'UGX 150,000', users: 'Up to 10', status: 'active' },
+  { name: 'Pro', key: 'pro', monthly: 'UGX 300,000', users: 'Up to 25', status: 'active' },
+  { name: 'Enterprise', key: 'enterprise', monthly: 'Custom', users: 'Custom', status: 'active' },
+];
 
 export default function PlatformAdminPage() {
   const router = useRouter();
   const { setActiveCompanyId, clearActiveCompanyId } = useActiveCompany();
+  const { impersonation, setStoredImpersonation, clearStoredImpersonation } = usePlatformImpersonation();
+  const [activeTab, setActiveTab] = useState<PlatformTab>('companies');
   const [companies, setCompanies] = useState<PlatformCompany[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -62,11 +62,6 @@ export default function PlatformAdminPage() {
   const [stopOpen, setStopOpen] = useState(false);
   const [stopReason, setStopReason] = useState('');
   const [stopping, setStopping] = useState(false);
-  const [impersonation, setImpersonation] = useState<ImpersonationState | null>(null);
-
-  useEffect(() => {
-    void Promise.resolve().then(() => setImpersonation(getStoredImpersonation()));
-  }, []);
 
   useEffect(() => {
     async function load() {
@@ -111,14 +106,13 @@ export default function PlatformAdminPage() {
       return;
     }
 
-    const nextState: ImpersonationState = {
+    const nextState = {
       sessionId: data.session.id,
       companyId: data.company.id,
       companyName: data.company.name,
       startedAt: data.session.started_at,
     };
-    window.localStorage.setItem(IMPERSONATION_KEY, JSON.stringify(nextState));
-    setImpersonation(nextState);
+    setStoredImpersonation(nextState);
     setActiveCompanyId(nextState.companyId);
     setSelectedCompany(null);
     setReason('');
@@ -146,9 +140,8 @@ export default function PlatformAdminPage() {
       return;
     }
 
-    window.localStorage.removeItem(IMPERSONATION_KEY);
+    clearStoredImpersonation();
     clearActiveCompanyId();
-    setImpersonation(null);
     setStopReason('');
     setStopOpen(false);
     setStopping(false);
@@ -219,6 +212,42 @@ export default function PlatformAdminPage() {
         </div>
       )}
 
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        {[
+          { label: 'Companies', value: companies.length, icon: Building2, tone: 'text-blue-700 bg-blue-50' },
+          { label: 'Active Tenants', value: companies.filter((company) => company.status === 'active').length, icon: CheckCircle, tone: 'text-green-700 bg-green-50' },
+          { label: 'Platform Users', value: companies.reduce((sum, company) => sum + company.member_count, 0), icon: Users, tone: 'text-slate-700 bg-slate-50' },
+          { label: 'Support Mode', value: impersonation ? 'On' : 'Off', icon: ShieldCheck, tone: impersonation ? 'text-amber-700 bg-amber-50' : 'text-slate-600 bg-slate-50' },
+        ].map(({ label, value, icon: Icon, tone }) => (
+          <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className={`mb-3 flex h-8 w-8 items-center justify-center rounded-lg ${tone}`}>
+              <Icon className="h-4 w-4" />
+            </div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="inline-flex max-w-full overflow-x-auto rounded-xl bg-slate-200/70 p-1">
+        {PLATFORM_TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setActiveTab(id)}
+            className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+              activeTab === id
+                ? 'bg-white text-slate-900 shadow-sm ring-2 ring-blue-600'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'companies' && (
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-4 border-b border-slate-100 p-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -254,6 +283,19 @@ export default function PlatformAdminPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
+                {filteredCompanies.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-12 text-center">
+                      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-50 text-slate-300">
+                        <Building2 className="h-6 w-6" />
+                      </div>
+                      <p className="font-semibold text-slate-600">
+                        {search ? 'No companies match your search.' : 'No companies have been created yet.'}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-400">Create the first company to begin onboarding tenants.</p>
+                    </td>
+                  </tr>
+                )}
                 {filteredCompanies.map((company) => (
                   <tr key={company.id} className="hover:bg-slate-50">
                     <td className="px-5 py-4">
@@ -311,6 +353,133 @@ export default function PlatformAdminPage() {
           </div>
         )}
       </section>
+      )}
+
+      {activeTab === 'users' && (
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Platform Users</h2>
+              <p className="text-sm text-slate-500">Global directory across all tenant memberships.</p>
+            </div>
+            <div className="relative w-full max-w-lg">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                placeholder="Search users by email, company, role, or status..."
+                className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-white text-slate-400 shadow-sm">
+              <Users className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-semibold text-slate-800">Global user table needs a platform API contract</h3>
+            <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">
+              Next step: expose a read-only platform endpoint that joins app users to company memberships,
+              then add filters for company, role, status, and last login.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'admins' && (
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Super Admins</h2>
+              <p className="text-sm text-slate-500">Platform-wide access should stay small and audited.</p>
+            </div>
+            <button className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+              <Shield className="h-4 w-4" />
+              Grant Access
+            </button>
+          </div>
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-white text-slate-400 shadow-sm">
+              <Shield className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-semibold text-slate-800">Super Admin audit workflow is partially implemented</h3>
+            <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">
+              Impersonation start/stop is audited. Add grant/revoke APIs with required reason logging before enabling this button.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'billing' && (
+        <section className="space-y-5">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Payment Packages</h2>
+                <p className="text-sm text-slate-500">Configure plan pricing, user limits, modules, and discounts.</p>
+              </div>
+              <div className="flex gap-2">
+                <button className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                  Seed defaults
+                </button>
+                <button className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                  <Plus className="h-4 w-4" />
+                  Plan
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3">Plan</th>
+                    <th className="px-4 py-3">Monthly</th>
+                    <th className="px-4 py-3">Users</th>
+                    <th className="px-4 py-3">Discounts</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {DEFAULT_PLANS.map((plan) => (
+                    <tr key={plan.key} className="hover:bg-slate-50">
+                      <td className="px-4 py-4">
+                        <p className="font-semibold text-slate-900">{plan.name}</p>
+                        <p className="text-xs text-slate-400">{plan.key}</p>
+                      </td>
+                      <td className="px-4 py-4 text-slate-700">{plan.monthly}</td>
+                      <td className="px-4 py-4 text-slate-700">{plan.users}</td>
+                      <td className="px-4 py-4 text-slate-500">Q 5% / 6M 10% / A 15%</td>
+                      <td className="px-4 py-4">
+                        <span className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700">{plan.status}</span>
+                      </td>
+                      <td className="px-4 py-4 text-right">
+                        <button className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Subscription Architecture Gap</h2>
+                <p className="text-sm text-slate-500">Billing UI exists, but persistent plans/subscriptions still need database support.</p>
+              </div>
+              <CalendarDays className="h-5 w-5 text-slate-400" />
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {['subscription_plans', 'tenant_subscriptions', 'billing_records'].map((item) => (
+                <div key={item} className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4">
+                  <p className="font-mono text-xs font-semibold text-slate-700">{item}</p>
+                  <p className="mt-1 text-xs text-slate-500">Required before production billing enforcement.</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {selectedCompany && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

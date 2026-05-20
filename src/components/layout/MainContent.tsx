@@ -2,6 +2,7 @@
 
 import { ReactNode } from 'react';
 import { useSidebar } from './SidebarContext';
+import { ImpersonationBanner } from '@/components/platform/ImpersonationBanner';
 
 export function MainContent({ children }: { children: ReactNode }) {
   const { collapsed } = useSidebar();
@@ -12,6 +13,7 @@ export function MainContent({ children }: { children: ReactNode }) {
                   p-4 md:p-6 xl:p-8
                   ${collapsed ? 'md:ml-24' : 'md:ml-80'}`}
     >
+      <ImpersonationBanner />
       {children}
     </main>
   );
