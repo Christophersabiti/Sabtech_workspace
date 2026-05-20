@@ -99,6 +99,12 @@ export function useActiveCompany() {
     window.dispatchEvent(new Event(ACTIVE_COMPANY_EVENT));
   }, []);
 
+  const clearActiveCompanyId = useCallback(() => {
+    setActiveCompanyIdState(null);
+    window.localStorage.removeItem(ACTIVE_COMPANY_KEY);
+    window.dispatchEvent(new Event(ACTIVE_COMPANY_EVENT));
+  }, []);
+
   const activeCompany =
     memberships.find((membership) => membership.company_id === activeCompanyId)?.company ?? null;
   const currentUserRoleForCompany =
@@ -112,5 +118,6 @@ export function useActiveCompany() {
     userCompanyMemberships: memberships,
     loading,
     setActiveCompanyId,
+    clearActiveCompanyId,
   };
 }

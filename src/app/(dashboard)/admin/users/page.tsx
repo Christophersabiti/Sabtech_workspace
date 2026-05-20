@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRequireRole } from '@/hooks/useCurrentUser';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { AppUser } from '@/types';
 import {
   UserCog, Plus, Search, X, Mail, CheckCircle,
@@ -46,7 +47,8 @@ function Avatar({ name, avatarUrl }: { name: string | null; avatarUrl: string | 
 
 export default function UsersPage() {
   const { checking } = useRequireRole(['super_admin', 'admin']);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [users, setUsers]             = useState<AppUser[]>([]);
   const [loading, setLoading]         = useState(true);
   const [search, setSearch]           = useState('');
@@ -64,16 +66,34 @@ export default function UsersPage() {
   };
 
   const load = useCallback(async () => {
+    if (companyLoading) return;
+    if (!activeCompanyId) {
+      setUsers([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const { data } = await supabase
-      .from('app_users')
-      .select('*')
+      .from('company_users')
+      .select('role_id, status, app_user:app_users(*)')
+      .eq('company_id', activeCompanyId)
       .order('created_at', { ascending: false });
-    setUsers((data || []) as AppUser[]);
+    const mappedUsers = (data || [])
+      .map((row) => {
+        const appUser = Array.isArray(row.app_user) ? row.app_user[0] : row.app_user;
+        return appUser
+          ? { ...appUser, role: row.role_id, status: row.status }
+          : null;
+      })
+      .filter(Boolean) as AppUser[];
+    setUsers(mappedUsers);
     setLoading(false);
-  }, []);
+  }, [activeCompanyId, companyLoading, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
 
   const filtered = users.filter(u => {
     const matchSearch = search === '' ||
@@ -91,7 +111,11 @@ export default function UsersPage() {
       const res = await fetch('/api/admin/invite-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim().toLowerCase(), role: inviteRole }),
+        body: JSON.stringify({
+          email: inviteEmail.trim().toLowerCase(),
+          role: inviteRole,
+          companyId: activeCompanyId,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to invite');
@@ -108,15 +132,25 @@ export default function UsersPage() {
   }
 
   async function updateStatus(userId: string, status: AppUser['status']) {
+    if (!activeCompanyId) return;
     setActionUserId(userId);
-    await supabase.from('app_users').update({ status, updated_at: new Date().toISOString() }).eq('id', userId);
+    await supabase
+      .from('company_users')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('app_user_id', userId)
+      .eq('company_id', activeCompanyId);
     showToast('success', `User ${status}`);
     load();
     setActionUserId(null);
   }
 
   async function updateRole(userId: string, role: string) {
-    await supabase.from('app_users').update({ role, updated_at: new Date().toISOString() }).eq('id', userId);
+    if (!activeCompanyId) return;
+    await supabase
+      .from('company_users')
+      .update({ role_id: role, updated_at: new Date().toISOString() })
+      .eq('app_user_id', userId)
+      .eq('company_id', activeCompanyId);
     showToast('success', 'Role updated');
     load();
   }

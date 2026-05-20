@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRequireRole } from '@/hooks/useCurrentUser';
+import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { Invitation } from '@/types';
 import { Clock, CheckCircle, XCircle, RefreshCw, AlertCircle, Mail, Loader2, Copy } from 'lucide-react';
 
@@ -22,7 +23,8 @@ const STATUS_ICONS: Record<string, React.ElementType> = {
 
 export default function InvitationsPage() {
   const { checking } = useRequireRole(['super_admin', 'admin']);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading]         = useState(true);
   const [resendingId, setResendingId] = useState<string | null>(null);
@@ -35,20 +37,35 @@ export default function InvitationsPage() {
   };
 
   const load = useCallback(async () => {
+    if (companyLoading) return;
+    if (!activeCompanyId) {
+      setInvitations([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const { data } = await supabase
       .from('invitations')
       .select('*')
+      .eq('company_id', activeCompanyId)
       .order('created_at', { ascending: false });
     setInvitations((data || []) as Invitation[]);
     setLoading(false);
-  }, []);
+  }, [activeCompanyId, companyLoading, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
 
   async function handleCancel(id: string) {
+    if (!activeCompanyId) return;
     if (!confirm('Cancel this invitation?')) return;
-    await supabase.from('invitations').update({ status: 'cancelled' }).eq('id', id);
+    await supabase
+      .from('invitations')
+      .update({ status: 'cancelled' })
+      .eq('id', id)
+      .eq('company_id', activeCompanyId);
     showToast('success', 'Invitation cancelled');
     load();
   }
@@ -59,7 +76,7 @@ export default function InvitationsPage() {
       const res = await fetch('/api/admin/invite-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inv.email, role: inv.role }),
+        body: JSON.stringify({ email: inv.email, role: inv.role, companyId: activeCompanyId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -78,7 +95,7 @@ export default function InvitationsPage() {
       const res = await fetch('/api/admin/generate-invite-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inv.email }),
+        body: JSON.stringify({ email: inv.email, companyId: activeCompanyId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);

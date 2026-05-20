@@ -1,19 +1,22 @@
 'use client';
 
 import { ReactNode, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { useRouter } from 'next/navigation';
 import { Building2, Loader2 } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 
 export function WorkspaceGate({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { memberships, loading } = useActiveCompany();
+  const isPlatformAdminRoute = pathname.startsWith('/admin/platform');
 
   useEffect(() => {
-    if (!loading && memberships.length === 0) {
+    if (!loading && memberships.length === 0 && !isPlatformAdminRoute) {
       router.replace('/onboarding/company');
     }
-  }, [loading, memberships.length, router]);
+  }, [isPlatformAdminRoute, loading, memberships.length, router]);
 
   if (loading) {
     return (
@@ -24,7 +27,7 @@ export function WorkspaceGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (memberships.length === 0) {
+  if (memberships.length === 0 && !isPlatformAdminRoute) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-600">

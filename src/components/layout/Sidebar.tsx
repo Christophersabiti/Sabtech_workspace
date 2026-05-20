@@ -22,11 +22,11 @@ import {
   ChevronDown,
   LogOut,
   ClipboardList,
+  ShieldCheck,
 } from 'lucide-react';
 import { useState, useEffect, useMemo, ElementType } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
-import { WorkspaceSwitcher } from '@/components/workspaces/WorkspaceSwitcher';
 import { useSidebar } from './SidebarContext';
 import { NavItem } from './NavItem';
 
@@ -52,10 +52,15 @@ const adminNav = [
   { label: 'Users', href: '/admin/users', icon: UserCog },
 ];
 
+const platformNav = [
+  { label: 'Platform Admin', href: '/admin/platform', icon: ShieldCheck },
+];
+
 type UserInfo = {
   name: string | null;
   email: string;
   role: string;
+  appRole: string;
 };
 
 type CompanyBranding = {
@@ -65,6 +70,7 @@ type CompanyBranding = {
 
 function useCurrentUserInfo() {
   const supabase = useMemo(() => createClient(), []);
+  const { activeCompanyId } = useActiveCompany();
   const [info, setInfo] = useState<UserInfo | null>(null);
 
   useEffect(() => {
@@ -83,19 +89,31 @@ function useCurrentUserInfo() {
         .eq('auth_user_id', session.user.id)
         .single();
 
+      const { data: membership } = data && activeCompanyId
+        ? await supabase
+            .from('company_users')
+            .select('role_id')
+            .eq('auth_user_id', session.user.id)
+            .eq('company_id', activeCompanyId)
+            .eq('status', 'active')
+            .maybeSingle()
+        : { data: null };
+
       if (!active) return;
 
       if (data) {
         setInfo({
           name: data.full_name,
           email: data.email,
-          role: data.role,
+          role: membership?.role_id ?? data.role,
+          appRole: data.role,
         });
       } else {
         setInfo({
           name: session.user.user_metadata?.full_name ?? null,
           email: session.user.email ?? '',
           role: 'staff',
+          appRole: 'staff',
         });
       }
     }
@@ -104,7 +122,7 @@ function useCurrentUserInfo() {
     return () => {
       active = false;
     };
-  }, [supabase]);
+  }, [activeCompanyId, supabase]);
 
   return info;
 }
@@ -351,8 +369,6 @@ export function SidebarNavContent({
         logoUrl={branding.logo_url}
       />
 
-      <WorkspaceSwitcher compact={collapsed} />
-
       <div className="flex-1 overflow-y-auto py-4">
         {mainNav.map(({ label, href, icon }) => {
           const isActive = href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -382,6 +398,22 @@ export function SidebarNavContent({
             <SettingsSection collapsed={collapsed} pathname={pathname} />
 
             {adminNav.map(({ label, href, icon }) => {
+              const isActive = pathname.startsWith(href);
+
+              return (
+                <NavItem
+                  key={href}
+                  href={href}
+                  label={label}
+                  icon={icon as ElementType}
+                  isActive={isActive}
+                  collapsed={collapsed}
+                  onClick={onNavClick}
+                />
+              );
+            })}
+
+            {user?.appRole === 'super_admin' && platformNav.map(({ label, href, icon }) => {
               const isActive = pathname.startsWith(href);
 
               return (

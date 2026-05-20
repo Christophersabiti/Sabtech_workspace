@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
           email: session.user.email ?? '',
           full_name: session.user.user_metadata?.full_name ?? session.user.user_metadata?.name ?? null,
           avatar_url: session.user.user_metadata?.avatar_url ?? null,
-          role,
+          role: 'staff',
           status: 'active',
           invited_at: invitation ? invitation.created_at : null,
           last_login_at: new Date().toISOString(),
@@ -68,7 +68,6 @@ export async function GET(req: NextRequest) {
         await adminSupabase
           .from('app_users')
           .update({
-            ...(invitation ? { role } : {}),
             last_login_at: new Date().toISOString(),
           })
           .eq('auth_user_id', session.user.id);

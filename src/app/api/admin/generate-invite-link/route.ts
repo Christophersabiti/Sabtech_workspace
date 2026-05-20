@@ -6,17 +6,18 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 export async function POST(req: NextRequest) {
-  // Verify caller is authenticated admin
   const cookieStore = await cookies();
   const authClient = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll()     { return cookieStore.getAll(); },
-        setAll(list) { list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)); },
+        getAll() { return cookieStore.getAll(); },
+        setAll(list) {
+          list.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
+        },
       },
-    }
+    },
   );
 
   const { data: { session } } = await authClient.auth.getSession();
@@ -24,67 +25,74 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Check role
+  const body = await req.json().catch(() => null) as {
+    email?: string;
+    companyId?: string;
+  } | null;
+  const email = body?.email?.toLowerCase().trim();
+  const companyId = body?.companyId;
+
+  if (!email || !companyId) {
+    return NextResponse.json({ error: 'email and companyId are required' }, { status: 400 });
+  }
+
   const { data: appUser } = await authClient
     .from('app_users')
-    .select('id, role')
+    .select('id')
     .eq('auth_user_id', session.user.id)
     .single();
 
-  if (!appUser || !['super_admin', 'admin'].includes(appUser.role)) {
-    return NextResponse.json({ error: 'Forbidden — admin access required' }, { status: 403 });
+  if (!appUser) {
+    return NextResponse.json({ error: 'Forbidden - user profile required' }, { status: 403 });
   }
 
   const { data: membership } = await authClient
     .from('company_users')
-    .select('company_id, role_id')
+    .select('company_id')
     .eq('app_user_id', appUser.id)
+    .eq('company_id', companyId)
     .eq('status', 'active')
     .in('role_id', ['super_admin', 'admin'])
-    .limit(1)
-    .single();
+    .maybeSingle();
 
   if (!membership?.company_id) {
-    return NextResponse.json({ error: 'Forbidden - no active company admin membership found' }, { status: 403 });
+    return NextResponse.json({ error: 'Forbidden - company admin access required' }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { email } = body as { email: string };
-
-  if (!email) {
-    return NextResponse.json({ error: 'email is required' }, { status: 400 });
-  }
-
-  // Service role client for admin operations
   const adminSupabase = createSupabaseClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
 
+  const { data: invitation } = await adminSupabase
+    .from('invitations')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('email', email)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  if (!invitation) {
+    return NextResponse.json({ error: 'No pending invitation exists for this company and email.' }, { status: 404 });
+  }
+
   const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL ?? req.nextUrl.origin}/auth/callback`;
-  
-  // Generate the Magic Link / Invite Link without sending the email via Supabase default
   const generatedLink = await adminSupabase.auth.admin.generateLink({
     type: 'invite',
-    email: email.toLowerCase().trim(),
-    options: {
-      redirectTo
-    }
+    email,
+    options: { redirectTo },
   });
   let linkData = generatedLink.data;
   const linkErr = generatedLink.error;
 
-  // If the user already exists in auth.users (because an email invite was run or they signed up before),
-  // generating an invite link throws "already registered". We fallback to generating a regular magic link 
-  // which behaves the exact same way for getting them logged in to accept their backend invitation.
   if (linkErr) {
     if (linkErr.message.toLowerCase().includes('already')) {
       const { data: magicLinkData, error: magicLinkErr } = await adminSupabase.auth.admin.generateLink({
         type: 'magiclink',
-        email: email.toLowerCase().trim(),
-        options: { redirectTo }
+        email,
+        options: { redirectTo },
       });
-      
+
       if (magicLinkErr) {
         return NextResponse.json({ error: magicLinkErr.message }, { status: 500 });
       }
@@ -94,8 +102,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ 
-    success: true, 
-    action_link: linkData?.properties?.action_link 
+  return NextResponse.json({
+    success: true,
+    action_link: linkData?.properties?.action_link,
   });
 }
