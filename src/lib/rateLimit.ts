@@ -8,6 +8,16 @@ type Bucket = {
   resetAt: number;
 };
 
+/**
+ * In-process token bucket. Works for development and single-instance deployments.
+ *
+ * ⚠️  KNOWN LIMITATION: In Vercel serverless / edge environments each function
+ * invocation may be a fresh cold-start, so the bucket Map resets and rate
+ * limiting cannot be enforced across instances.
+ *
+ * TODO: Replace with a distributed store (Upstash Redis / Supabase pg rate-limit
+ * function) before going multi-tenant in production.
+ */
 const buckets = new Map<string, Bucket>();
 
 export class RateLimitError extends Error {

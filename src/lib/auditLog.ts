@@ -2,6 +2,12 @@ import { SupabaseClient } from '@supabase/supabase-js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export type QuotationAuditAction =
+  | 'created'
+  | 'updated'
+  | 'status_changed'
+  | 'converted';
+
 export type InvoiceAuditAction =
   | 'created'
   | 'sent'
@@ -46,6 +52,17 @@ export type PaymentAuditEntry = {
   new_status?:  string | null;
   reason?:      string | null;
   amount?:      number | null;
+  metadata?:    Record<string, unknown>;
+};
+
+export type QuotationAuditEntry = {
+  company_id:   string;
+  quotation_id: string;
+  action:       QuotationAuditAction;
+  performed_by: string | null;
+  old_status?:  string | null;
+  new_status?:  string | null;
+  reason?:      string | null;
   metadata?:    Record<string, unknown>;
 };
 
@@ -99,6 +116,24 @@ export async function logInvoiceAction(
   await supabase.from('invoice_audit_log').insert({
     company_id:   entry.company_id,
     invoice_id:   entry.invoice_id,
+    action:       entry.action,
+    performed_by: entry.performed_by ?? null,
+    old_status:   entry.old_status   ?? null,
+    new_status:   entry.new_status   ?? null,
+    reason:       entry.reason        ?? null,
+    metadata:     entry.metadata      ?? null,
+  });
+}
+
+// ─── Quotation Audit ──────────────────────────────────────────────────────────
+
+export async function logQuotationAction(
+  supabase: SupabaseClient,
+  entry:    QuotationAuditEntry,
+): Promise<void> {
+  await supabase.from('quotation_audit_log').insert({
+    company_id:   entry.company_id,
+    quotation_id: entry.quotation_id,
     action:       entry.action,
     performed_by: entry.performed_by ?? null,
     old_status:   entry.old_status   ?? null,

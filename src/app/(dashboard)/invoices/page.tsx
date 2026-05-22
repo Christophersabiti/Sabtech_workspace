@@ -8,7 +8,9 @@ import { Invoice } from '@/types';
 import { formatCurrency, formatDate, STATUS_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Plus, Search, FileText, TrendingUp, CheckCircle, AlertCircle } from 'lucide-react';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Plus, Search, FileText, TrendingUp, CheckCircle, AlertCircle, Download } from 'lucide-react';
 
 const ALL_STATUSES = ['draft', 'sent', 'partially_paid', 'paid', 'overdue', 'cancelled', 'void'] as const;
 
@@ -68,18 +70,49 @@ export default function InvoicesPage() {
 
   const hasFilters = !!(statusFilter || dateFrom || dateTo);
 
+  function exportCSV() {
+    const headers = ['Invoice #', 'Client', 'Project', 'Issue Date', 'Due Date', 'Currency', 'Total', 'Paid', 'Balance', 'Status'];
+    const rows = filtered.map(inv => [
+      inv.invoice_number,
+      (inv.client as { name: string } | undefined)?.name ?? '',
+      (inv.project as { project_name: string } | null)?.project_name ?? '',
+      inv.issue_date,
+      inv.due_date ?? '',
+      inv.currency,
+      inv.total_amount,
+      inv.total_paid,
+      inv.balance_due,
+      inv.status,
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a   = document.createElement('a');
+    a.href    = url;
+    a.download = `invoices-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div>
       <PageHeader
         title="Invoices"
         subtitle={`${invoices.length} invoice${invoices.length !== 1 ? 's' : ''}`}
         action={
-          <Link
-            href="/invoices/new"
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-          >
-            <Plus className="h-4 w-4" /> New Invoice
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={exportCSV}
+              className="inline-flex items-center gap-2 border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm px-3 py-2 rounded-lg"
+            >
+              <Download className="h-4 w-4" /> Export
+            </button>
+            <Link
+              href="/invoices/new"
+              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              <Plus className="h-4 w-4" /> New Invoice
+            </Link>
+          </div>
         }
       />
 
@@ -151,12 +184,18 @@ export default function InvoicesPage() {
       {/* Table / Cards */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
         {loading ? (
-          <div className="p-12 text-center text-slate-400">Loading...</div>
+          <LoadingSpinner label="Loading invoices…" />
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center">
-            <FileText className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium">No invoices found</p>
-          </div>
+          <EmptyState
+            icon={FileText}
+            title="No invoices found"
+            description={hasFilters || search ? 'Try clearing your filters.' : 'Create your first invoice to get started.'}
+            action={!hasFilters && !search ? (
+              <Link href="/invoices/new" className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg">
+                <Plus className="h-4 w-4" /> New Invoice
+              </Link>
+            ) : undefined}
+          />
         ) : (
           <>
             {/* Desktop table */}

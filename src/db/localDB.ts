@@ -15,13 +15,8 @@ import type {
   ProjectTask,
 } from '@/types';
 
-// ─── Extra columns added by migration 007 that aren't on the shared type yet ──
-export interface LocalProjectTask extends ProjectTask {
-  start_date?: string | null;
-  end_date?: string | null;
-  assigned_to?: string | null;
-  updated_at?: string;
-}
+// LocalProjectTask now matches ProjectTask exactly — kept as alias for compatibility
+export type LocalProjectTask = ProjectTask;
 
 // ─── Database class ──────────────────────────────────────────────────────────
 

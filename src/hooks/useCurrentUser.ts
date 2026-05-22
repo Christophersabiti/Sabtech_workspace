@@ -140,20 +140,28 @@ type Permission =
   | 'create_project'
   | 'void_invoice'
   | 'reverse_payment'
+  | 'record_payment'
   | 'export_statement'
   | 'view_audit_log'
   | 'view_reconciliation'
   | 'manage_users'
-  | 'manage_settings';
+  | 'manage_settings'
+  | 'approve_quotation'
+  | 'send_invoice'
+  | 'send_reminder';
 
 const PERMISSION_MATRIX: Record<Permission, string[]> = {
   edit_client:          ['super_admin', 'admin', 'finance'],
   create_project:       ['super_admin', 'admin', 'project_manager'],
   void_invoice:         ['super_admin', 'admin', 'finance'],
   reverse_payment:      ['super_admin', 'admin', 'finance'],
+  record_payment:       ['super_admin', 'admin', 'finance'],
   export_statement:     ['super_admin', 'admin', 'finance', 'project_manager'],
   view_audit_log:       ['super_admin', 'admin', 'finance'],
   view_reconciliation:  ['super_admin', 'admin', 'finance'],
   manage_users:         ['super_admin', 'admin'],
   manage_settings:      ['super_admin', 'admin'],
+  approve_quotation:    ['super_admin', 'admin', 'finance', 'project_manager'],
+  send_invoice:         ['super_admin', 'admin', 'finance'],
+  send_reminder:        ['super_admin', 'admin', 'finance'],
 };

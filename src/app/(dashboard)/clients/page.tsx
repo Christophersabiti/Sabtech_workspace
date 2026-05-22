@@ -9,12 +9,14 @@ import { formatCurrency } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { EditClientPanel } from '@/components/clients/EditClientPanel';
 import { useClientFilters } from '@/hooks/useClientFilters';
+import { ImportClientsModal } from '@/components/clients/ImportClientsModal';
 import {
   Plus,
   Search,
   Filter,
   X,
   Download,
+  Upload,
   Users,
   AlertCircle,
   ChevronRight,
@@ -71,7 +73,8 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [editingClient, setEditingClient] = useState<ClientWithStats | null>(null);
+  const [editingClient,    setEditingClient]    = useState<ClientWithStats | null>(null);
+  const [showImportModal,  setShowImportModal]  = useState(false);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -193,12 +196,20 @@ export default function ClientsPage() {
         title="Clients"
         subtitle="Manage client accounts, contacts, and billing relationships"
         action={
-          <Link
-            href="/clients/new"
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-          >
-            <Plus className="h-4 w-4" /> New Client
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowImportModal(true)}
+              className="inline-flex items-center gap-2 border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm px-3 py-2 rounded-lg"
+            >
+              <Upload className="h-4 w-4" /> Import
+            </button>
+            <Link
+              href="/clients/new"
+              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              <Plus className="h-4 w-4" /> New Client
+            </Link>
+          </div>
         }
       />
 
@@ -346,10 +357,19 @@ export default function ClientsPage() {
 
       {/* Client list */}
       {loading ? (
-        <div className="p-12 text-center text-slate-400">Loading clients…</div>
+        <div className="p-12 text-center text-slate-400 flex flex-col items-center gap-3">
+          <div className="w-6 h-6 animate-spin border-2 border-slate-300 border-t-slate-600 rounded-full" />
+          <p className="text-sm">Loading clients…</p>
+        </div>
       ) : clients.length === 0 ? (
-        <div className="p-12 text-center text-slate-400">
-          {showArchived ? 'No archived clients.' : hasActive ? 'No clients match your filters.' : 'No clients yet.'}
+        <div className="p-12 text-center">
+          <Users className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+          <p className="text-slate-600 font-medium mb-1">
+            {showArchived ? 'No archived clients.' : hasActive ? 'No clients match your filters.' : 'No clients yet.'}
+          </p>
+          {!showArchived && !hasActive && (
+            <p className="text-slate-400 text-sm">Add your first client to get started.</p>
+          )}
         </div>
       ) : (
         <>
@@ -501,6 +521,19 @@ export default function ClientsPage() {
             ))}
           </div>
         </>
+      )}
+
+      {/* Import modal */}
+      {activeCompanyId && (
+        <ImportClientsModal
+          open={showImportModal}
+          onClose={() => setShowImportModal(false)}
+          companyId={activeCompanyId}
+          onImported={count => {
+            setShowImportModal(false);
+            void load();
+          }}
+        />
       )}
 
       {/* Edit panel */}

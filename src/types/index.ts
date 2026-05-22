@@ -401,5 +401,11 @@ export type ProjectTask = {
   title: string;
   description: string | null;
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  start_date: string | null;
+  end_date: string | null;
+  assigned_to: string | null;
+  is_billable: boolean;
+  estimated_hours: number | null;
   created_at: string;
+  updated_at: string | null;
 };

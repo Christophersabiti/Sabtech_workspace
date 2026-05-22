@@ -27,6 +27,8 @@ type ProjectTask = {
   start_date: string | null;
   end_date: string | null;
   assigned_to: string | null;
+  is_billable: boolean;
+  estimated_hours: number | null;
   created_at: string;
   updated_at: string | null;
 };
@@ -80,6 +82,8 @@ const emptyTaskForm = () => ({
   end_date: '',
   assigned_to: '',
   status: 'pending' as TaskStatus,
+  is_billable: false,
+  estimated_hours: '',
 });
 
 function encodeCsvCell(value: string) {
@@ -410,12 +414,14 @@ export default function ProjectProfilePage() {
   function openEditTask(task: ProjectTask) {
     setEditingTask(task);
     setTaskForm({
-      title:       task.title,
-      description: task.description || '',
-      start_date:  task.start_date || '',
-      end_date:    task.end_date || '',
-      assigned_to: task.assigned_to || '',
-      status:      task.status,
+      title:           task.title,
+      description:     task.description || '',
+      start_date:      task.start_date || '',
+      end_date:        task.end_date || '',
+      assigned_to:     task.assigned_to || '',
+      status:          task.status,
+      is_billable:     task.is_billable ?? false,
+      estimated_hours: task.estimated_hours?.toString() ?? '',
     });
     setShowTaskForm(true);
   }
@@ -425,12 +431,14 @@ export default function ProjectProfilePage() {
     if (!project) return;
     setSavingTask(true);
     const payload = {
-      title:       taskForm.title.trim(),
-      description: taskForm.description.trim() || null,
-      start_date:  taskForm.start_date || null,
-      end_date:    taskForm.end_date || null,
-      assigned_to: taskForm.assigned_to.trim() || null,
-      status:      taskForm.status,
+      title:           taskForm.title.trim(),
+      description:     taskForm.description.trim() || null,
+      start_date:      taskForm.start_date || null,
+      end_date:        taskForm.end_date || null,
+      assigned_to:     taskForm.assigned_to.trim() || null,
+      status:          taskForm.status,
+      is_billable:     taskForm.is_billable,
+      estimated_hours: taskForm.estimated_hours ? parseFloat(taskForm.estimated_hours) : null,
     };
 
     if (editingTask) {
@@ -1105,6 +1113,31 @@ export default function ProjectProfilePage() {
                       <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
                     ))}
                   </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Estimated Hours</label>
+                  <input
+                    type="number"
+                    min="0" step="0.25"
+                    value={taskForm.estimated_hours}
+                    onChange={e => setTaskForm(f => ({ ...f, estimated_hours: e.target.value }))}
+                    placeholder="e.g. 4.5"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex items-center gap-3 pt-5">
+                  <input
+                    id="is_billable"
+                    type="checkbox"
+                    checked={taskForm.is_billable}
+                    onChange={e => setTaskForm(f => ({ ...f, is_billable: e.target.checked }))}
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <label htmlFor="is_billable" className="text-sm font-medium text-slate-700 cursor-pointer select-none">
+                    Billable task
+                  </label>
                 </div>
               </div>
               <div className="flex gap-3 pt-2">

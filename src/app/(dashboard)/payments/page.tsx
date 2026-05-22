@@ -4,31 +4,47 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { Payment } from '@/types';
 import { formatCurrency, formatDate, PAYMENT_METHOD_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Search, CreditCard } from 'lucide-react';
+import { PaymentStatusBadge } from '@/components/ui/PaymentStatusBadge';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Search, CreditCard, Download, RotateCcw } from 'lucide-react';
 
 type PaymentRow = Payment & { invoice: { invoice_number: string; invoice_id: string; client: { name: string } } };
+
+type Toast = { msg: string; ok: boolean };
 
 export default function PaymentsPage() {
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
-  const [payments, setPayments]           = useState<PaymentRow[]>([]);
-  const [loading, setLoading]             = useState(true);
-  const [search, setSearch]               = useState('');
-  const [methodFilter, setMethodFilter]   = useState('');
-  const [statusFilter, setStatusFilter]   = useState('');
+  const { can } = useCurrentUser();
+
+  const [payments,      setPayments]      = useState<PaymentRow[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [search,        setSearch]        = useState('');
+  const [methodFilter,  setMethodFilter]  = useState('');
+  const [statusFilter,  setStatusFilter]  = useState('');
+  const [toast,         setToast]         = useState<Toast | null>(null);
+
+  // Reversal dialog state
+  const [reversalTarget, setReversalTarget] = useState<PaymentRow | null>(null);
+  const [reversalReason, setReversalReason] = useState('');
+  const [reversalBusy,   setReversalBusy]   = useState(false);
+
+  const showToast = (msg: string, ok: boolean) => {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   const fetchPayments = useCallback(async () => {
     if (!activeCompanyId) {
-      if (!companyLoading) {
-        setPayments([]);
-        setLoading(false);
-      }
+      if (!companyLoading) { setPayments([]); setLoading(false); }
       return;
     }
-
     setLoading(true);
     let query = supabase
       .from('payments')
@@ -54,22 +70,80 @@ export default function PaymentsPage() {
       .some(v => v?.toLowerCase().includes(search.toLowerCase()))
   );
 
-  // Totals — exclude reversed
-  const confirmed = payments.filter(p => p.status !== 'reversed');
+  // Totals
+  const confirmed      = payments.filter(p => p.status !== 'reversed');
   const totalReceived  = confirmed.reduce((s, p) => s + p.amount_paid, 0);
   const totalReversed  = payments.filter(p => p.status === 'reversed').reduce((s, p) => s + p.amount_paid, 0);
 
-  const paymentStatusBadge = (status: string) => {
-    if (status === 'reversed') return 'bg-red-100 text-red-600';
-    if (status === 'failed')   return 'bg-amber-100 text-amber-700';
-    return 'bg-green-100 text-green-700';
-  };
+  // ── Payment Reversal ──────────────────────────────────────────────────────────
+  async function submitReversal() {
+    if (!reversalTarget || !reversalReason.trim() || !activeCompanyId) return;
+    setReversalBusy(true);
+
+    const res = await fetch(`/api/payments/${reversalTarget.id}/reverse`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ company_id: activeCompanyId, reason: reversalReason }),
+    });
+    const data = await res.json() as { ok?: boolean; error?: string };
+
+    setReversalTarget(null);
+    setReversalReason('');
+
+    if (res.ok && data.ok) {
+      showToast('Payment reversed successfully.', true);
+      await fetchPayments();
+    } else {
+      showToast(data.error ?? 'Reversal failed.', false);
+    }
+    setReversalBusy(false);
+  }
+
+  // ── Export CSV ────────────────────────────────────────────────────────────────
+  function exportCSV() {
+    const headers = ['Receipt #', 'Date', 'Client', 'Invoice', 'Amount', 'Method', 'Reference', 'Status', 'Note'];
+    const rows = filtered.map(p => [
+      p.payment_number,
+      p.payment_date,
+      p.invoice?.client?.name ?? '',
+      p.invoice?.invoice_number ?? '',
+      p.amount_paid,
+      PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
+      p.reference_number ?? '',
+      p.status ?? 'confirmed',
+      p.reversal_reason ?? p.note ?? '',
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a   = document.createElement('a');
+    a.href    = url;
+    a.download = `payments-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const canReverse = can('reverse_payment');
 
   return (
     <div>
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
+          toast.ok ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+        }`}>{toast.msg}</div>
+      )}
+
       <PageHeader
         title="Payments"
         subtitle={`${payments.length} payment${payments.length !== 1 ? 's' : ''} recorded`}
+        action={
+          <button
+            onClick={exportCSV}
+            className="inline-flex items-center gap-2 border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm px-4 py-2 rounded-lg"
+          >
+            <Download className="h-4 w-4" /> Export CSV
+          </button>
+        }
       />
 
       {/* Summary cards */}
@@ -101,17 +175,14 @@ export default function PaymentsPage() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
-            type="text"
-            placeholder="Search payments..."
-            value={search}
+            type="text" placeholder="Search payments…" value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
         <div className="flex gap-2">
           <select
-            value={methodFilter}
-            onChange={e => setMethodFilter(e.target.value)}
+            value={methodFilter} onChange={e => setMethodFilter(e.target.value)}
             className="flex-1 sm:flex-none border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All methods</option>
@@ -120,8 +191,7 @@ export default function PaymentsPage() {
             ))}
           </select>
           <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
+            value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
             className="flex-1 sm:flex-none border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All statuses</option>
@@ -136,12 +206,13 @@ export default function PaymentsPage() {
       {/* Table / Cards */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
         {loading ? (
-          <div className="p-12 text-center text-slate-400">Loading...</div>
+          <LoadingSpinner label="Loading payments…" />
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center">
-            <CreditCard className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium">No payments found</p>
-          </div>
+          <EmptyState
+            icon={CreditCard}
+            title="No payments found"
+            description={search || methodFilter || statusFilter ? 'Try clearing your filters.' : 'Payments will appear here once recorded.'}
+          />
         ) : (
           <>
             {/* Desktop table */}
@@ -149,7 +220,7 @@ export default function PaymentsPage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    {['Receipt #', 'Date', 'Client', 'Invoice', 'Amount', 'Method', 'Reference', 'Status'].map(h => (
+                    {['Receipt #', 'Date', 'Client', 'Invoice', 'Amount', 'Method', 'Reference', 'Status', canReverse ? 'Action' : ''].filter(Boolean).map(h => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
@@ -170,11 +241,19 @@ export default function PaymentsPage() {
                       </td>
                       <td className="px-4 py-3 text-slate-600">{PAYMENT_METHOD_LABELS[pay.payment_method]}</td>
                       <td className="px-4 py-3 font-mono text-xs text-slate-500">{pay.reference_number || '—'}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${paymentStatusBadge(pay.status ?? 'confirmed')}`}>
-                          {pay.status ?? 'confirmed'}
-                        </span>
-                      </td>
+                      <td className="px-4 py-3"><PaymentStatusBadge status={pay.status ?? 'confirmed'} /></td>
+                      {canReverse && (
+                        <td className="px-4 py-3">
+                          {pay.status === 'confirmed' && (
+                            <button
+                              onClick={() => setReversalTarget(pay)}
+                              className="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 border border-red-200 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors"
+                            >
+                              <RotateCcw className="h-3 w-3" /> Reverse
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -192,9 +271,7 @@ export default function PaymentsPage() {
                         {pay.invoice?.invoice_number}
                       </Link>
                     </div>
-                    <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${paymentStatusBadge(pay.status ?? 'confirmed')}`}>
-                      {pay.status ?? 'confirmed'}
-                    </span>
+                    <PaymentStatusBadge status={pay.status ?? 'confirmed'} />
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     <p className={`text-base font-bold ${pay.status === 'reversed' ? 'text-slate-400 line-through' : 'text-green-700'}`}>
@@ -207,12 +284,49 @@ export default function PaymentsPage() {
                     {pay.reference_number && <span className="font-mono">{pay.reference_number}</span>}
                     <span className="font-mono text-slate-400">{pay.payment_number}</span>
                   </div>
+                  {canReverse && pay.status === 'confirmed' && (
+                    <button
+                      onClick={() => setReversalTarget(pay)}
+                      className="mt-2 inline-flex items-center gap-1 text-xs text-red-500 border border-red-200 bg-red-50 px-2 py-1 rounded-lg"
+                    >
+                      <RotateCcw className="h-3 w-3" /> Reverse
+                    </button>
+                  )}
+                  {pay.reversal_reason && (
+                    <p className="mt-1 text-xs text-red-400 italic">{pay.reversal_reason}</p>
+                  )}
                 </div>
               ))}
             </div>
           </>
         )}
       </div>
+
+      {/* Reversal Confirm Dialog */}
+      <ConfirmDialog
+        open={!!reversalTarget}
+        onClose={() => { setReversalTarget(null); setReversalReason(''); }}
+        onConfirm={submitReversal}
+        title={`Reverse payment ${reversalTarget?.payment_number ?? ''}?`}
+        description={`This will reverse ${formatCurrency(reversalTarget?.amount_paid ?? 0)} and recalculate the invoice balance. A reason is required.`}
+        confirmLabel="Reverse Payment"
+        danger
+        loading={reversalBusy}
+      >
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Reason * (min. 10 characters)</label>
+          <textarea
+            value={reversalReason}
+            onChange={e => setReversalReason(e.target.value)}
+            rows={3}
+            placeholder="Why is this payment being reversed?"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
+          />
+          {reversalReason.length > 0 && reversalReason.length < 10 && (
+            <p className="text-xs text-red-500 mt-1">{10 - reversalReason.length} more characters required.</p>
+          )}
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }
