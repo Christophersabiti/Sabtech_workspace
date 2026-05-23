@@ -1,0 +1,161 @@
+// ─── Enhanced Project Task Types ─────────────────────────────────────────────
+
+export type TaskPriority = 'low' | 'medium' | 'high' | 'critical';
+
+export type TaskStatus =
+  | 'backlog'
+  | 'pending'
+  | 'in_progress'
+  | 'in_review'
+  | 'blocked'
+  | 'completed'
+  | 'cancelled';
+
+export type EnhancedProjectTask = {
+  id: string;
+  company_id: string;
+  project_id: string | null;
+  quotation_id: string | null;
+  quotation_item_id: string | null;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  progress: number;
+  sort_order: number;
+  start_date: string | null;
+  end_date: string | null;
+  assigned_to: string | null;
+  parent_task_id: string | null;
+  tags: string[];
+  is_billable: boolean;
+  estimated_hours: number | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type TaskViewMode = 'list' | 'kanban' | 'gantt';
+
+export type KanbanColumn = {
+  id: string;
+  company_id: string;
+  project_id: string | null;
+  name: string;
+  status_key: TaskStatus;
+  sort_order: number;
+  wip_limit: number | null;
+  color: string;
+  is_default: boolean;
+};
+
+export type TaskDependency = {
+  id: string;
+  company_id: string;
+  project_id: string | null;
+  task_id: string;
+  depends_on_task_id: string;
+  dependency_type: 'finish_to_start' | 'start_to_start' | 'finish_to_finish' | 'start_to_finish';
+  created_at: string;
+};
+
+export type TaskActivityLog = {
+  id: string;
+  company_id: string;
+  project_id: string | null;
+  task_id: string | null;
+  user_id: string | null;
+  action: string;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
+// ─── Label / style maps ───────────────────────────────────────────────────────
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  backlog:     'Backlog',
+  pending:     'Not Started',
+  in_progress: 'In Progress',
+  in_review:   'In Review',
+  blocked:     'Blocked',
+  completed:   'Completed',
+  cancelled:   'Cancelled',
+};
+
+export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
+  backlog:     'bg-slate-100 text-slate-500',
+  pending:     'bg-zinc-100 text-zinc-600',
+  in_progress: 'bg-blue-100 text-blue-700',
+  in_review:   'bg-violet-100 text-violet-700',
+  blocked:     'bg-red-100 text-red-600',
+  completed:   'bg-green-100 text-green-700',
+  cancelled:   'bg-gray-100 text-gray-500 line-through',
+};
+
+export const TASK_STATUS_DOT: Record<TaskStatus, string> = {
+  backlog:     'bg-slate-400',
+  pending:     'bg-zinc-400',
+  in_progress: 'bg-blue-500',
+  in_review:   'bg-violet-500',
+  blocked:     'bg-red-500',
+  completed:   'bg-green-500',
+  cancelled:   'bg-gray-400',
+};
+
+export const TASK_STATUS_BORDER: Record<TaskStatus, string> = {
+  backlog:     'border-l-slate-400',
+  pending:     'border-l-zinc-400',
+  in_progress: 'border-l-blue-500',
+  in_review:   'border-l-violet-500',
+  blocked:     'border-l-red-500',
+  completed:   'border-l-green-500',
+  cancelled:   'border-l-gray-400',
+};
+
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+  low:      'Low',
+  medium:   'Medium',
+  high:     'High',
+  critical: 'Critical',
+};
+
+export const TASK_PRIORITY_COLORS: Record<TaskPriority, string> = {
+  low:      'bg-slate-100 text-slate-500',
+  medium:   'bg-amber-50 text-amber-600',
+  high:     'bg-orange-100 text-orange-600',
+  critical: 'bg-red-100 text-red-600',
+};
+
+export const TASK_PRIORITY_DOT: Record<TaskPriority, string> = {
+  low:      'bg-slate-400',
+  medium:   'bg-amber-400',
+  high:     'bg-orange-500',
+  critical: 'bg-red-500',
+};
+
+// Column color for Gantt & Kanban
+export const KANBAN_COLUMN_COLORS: Record<TaskStatus, string> = {
+  backlog:     '#94a3b8',
+  pending:     '#64748b',
+  in_progress: '#3b82f6',
+  in_review:   '#8b5cf6',
+  blocked:     '#ef4444',
+  completed:   '#22c55e',
+  cancelled:   '#6b7280',
+};
+
+export const DEFAULT_KANBAN_COLUMNS: Array<{
+  status_key: TaskStatus;
+  name: string;
+  color: string;
+  sort_order: number;
+}> = [
+  { status_key: 'backlog',     name: 'Backlog',     color: '#94a3b8', sort_order: 0 },
+  { status_key: 'pending',     name: 'Not Started', color: '#64748b', sort_order: 1 },
+  { status_key: 'in_progress', name: 'In Progress', color: '#3b82f6', sort_order: 2 },
+  { status_key: 'in_review',   name: 'In Review',   color: '#8b5cf6', sort_order: 3 },
+  { status_key: 'blocked',     name: 'Blocked',     color: '#ef4444', sort_order: 4 },
+  { status_key: 'completed',   name: 'Completed',   color: '#22c55e', sort_order: 5 },
+  { status_key: 'cancelled',   name: 'Cancelled',   color: '#6b7280', sort_order: 6 },
+];

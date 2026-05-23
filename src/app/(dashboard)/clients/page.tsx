@@ -135,12 +135,23 @@ export default function ClientsPage() {
           console.error('Failed to load client stats. Falling back to tenant-scoped clients query:', error);
         }
 
-        const { data: fallbackClients, error: fallbackError } = await supabase
+        // Build fallback query with the same filters the RPC would have applied
+        let fallbackQ = supabase
           .from('clients')
           .select('*')
           .eq('company_id', activeCompanyId)
-          .eq('is_archived', false)
-          .order('name');
+          .eq('is_archived', false);
+
+        if (filters.search) {
+          const s = filters.search;
+          fallbackQ = fallbackQ.or(
+            `name.ilike.%${s}%,company_name.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%,client_code.ilike.%${s}%`,
+          );
+        }
+        if (filters.status)   fallbackQ = fallbackQ.eq('status',   filters.status);
+        if (filters.currency) fallbackQ = fallbackQ.eq('currency', filters.currency);
+
+        const { data: fallbackClients, error: fallbackError } = await fallbackQ.order('name');
 
         if (fallbackError) {
           console.error('Failed to load clients fallback:', fallbackError);

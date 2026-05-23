@@ -9,43 +9,30 @@ import { Project, Invoice, InvoiceSchedule, Client } from '@/types';
 import { formatCurrency, formatDate, BILLING_TYPE_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { ArrowLeft, Plus, X, Pencil, Trash2, Tag, Settings2, CheckCircle, XCircle, Download, Upload, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import {
+  ArrowLeft, Plus, X, Pencil, Trash2, Tag, Settings2,
+  CheckCircle, XCircle, Download, Upload, FileSpreadsheet, AlertCircle,
+} from 'lucide-react';
+
+// ── New PM components ──────────────────────────────────────────────────────────
+import { ProjectViewSwitcher }                       from '@/components/projects/ProjectViewSwitcher';
+import { ProjectKpiCards }                           from '@/components/projects/ProjectKpiCards';
+import { ProjectFilters, applyFilters, EMPTY_FILTERS } from '@/components/projects/ProjectFilters';
+import type { TaskFilters }                          from '@/components/projects/ProjectFilters';
+import { ProjectKanbanView }                         from '@/components/projects/ProjectKanbanView';
+import { ProjectGanttView }                          from '@/components/projects/ProjectGanttView';
+import { ProjectTaskDrawer }                         from '@/components/projects/ProjectTaskDrawer';
+import type { TaskFormValues }                       from '@/components/projects/ProjectTaskDrawer';
+import type { EnhancedProjectTask, TaskViewMode, TaskStatus } from '@/components/projects/types';
+import {
+  TASK_STATUS_LABELS,
+  TASK_STATUS_COLORS,
+  TASK_STATUS_DOT,
+} from '@/components/projects/types';
+
+// ─── Legacy types preserved for CSV upload compatibility ─────────────────────
 
 type Tab = 'overview' | 'tasks' | 'invoices' | 'schedule';
-
-type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-
-type ProjectTask = {
-  id: string;
-  company_id: string;
-  project_id: string | null;
-  quotation_id: string | null;
-  quotation_item_id: string | null;
-  title: string;
-  description: string | null;
-  status: TaskStatus;
-  start_date: string | null;
-  end_date: string | null;
-  assigned_to: string | null;
-  is_billable: boolean;
-  estimated_hours: number | null;
-  created_at: string;
-  updated_at: string | null;
-};
-
-const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  pending:     'Not Started',
-  in_progress: 'In Progress',
-  completed:   'Completed',
-  cancelled:   'Cancelled',
-};
-
-const TASK_STATUS_STYLES: Record<TaskStatus, string> = {
-  pending:     'bg-slate-100 text-slate-600',
-  in_progress: 'bg-blue-100 text-blue-700',
-  completed:   'bg-green-100 text-green-700',
-  cancelled:   'bg-red-100 text-red-500',
-};
 
 type TaskUploadRow = {
   rowNumber: number;
@@ -61,30 +48,27 @@ type TaskUploadRow = {
 const TASK_TEMPLATE_HEADERS = ['Title', 'Description', 'Start Date', 'Due Date', 'Assigned To', 'Status'];
 
 const TASK_STATUS_ALIASES: Record<string, TaskStatus> = {
-  pending: 'pending',
-  notstarted: 'pending',
+  pending:     'pending',
+  notstarted:  'pending',
   not_started: 'pending',
-  todo: 'pending',
-  inprogress: 'in_progress',
+  todo:        'pending',
+  backlog:     'backlog',
+  inprogress:  'in_progress',
   in_progress: 'in_progress',
-  progress: 'in_progress',
-  completed: 'completed',
-  complete: 'completed',
-  done: 'completed',
-  cancelled: 'cancelled',
-  canceled: 'cancelled',
+  progress:    'in_progress',
+  inreview:    'in_review',
+  in_review:   'in_review',
+  review:      'in_review',
+  blocked:     'blocked',
+  block:       'blocked',
+  completed:   'completed',
+  complete:    'completed',
+  done:        'completed',
+  cancelled:   'cancelled',
+  canceled:    'cancelled',
 };
 
-const emptyTaskForm = () => ({
-  title: '',
-  description: '',
-  start_date: '',
-  end_date: '',
-  assigned_to: '',
-  status: 'pending' as TaskStatus,
-  is_billable: false,
-  estimated_hours: '',
-});
+// ─── CSV helpers ──────────────────────────────────────────────────────────────
 
 function encodeCsvCell(value: string) {
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
@@ -95,98 +79,76 @@ function parseCsv(text: string) {
   let row: string[] = [];
   let value = '';
   let quoted = false;
-
-  for (let i = 0; i < text.length; i += 1) {
+  for (let i = 0; i < text.length; i++) {
     const char = text[i];
     const next = text[i + 1];
-
     if (char === '"') {
-      if (quoted && next === '"') {
-        value += '"';
-        i += 1;
-      } else {
-        quoted = !quoted;
-      }
+      if (quoted && next === '"') { value += '"'; i++; } else { quoted = !quoted; }
     } else if (char === ',' && !quoted) {
-      row.push(value.trim());
-      value = '';
+      row.push(value.trim()); value = '';
     } else if ((char === '\n' || char === '\r') && !quoted) {
-      if (char === '\r' && next === '\n') i += 1;
+      if (char === '\r' && next === '\n') i++;
       row.push(value.trim());
-      if (row.some(cell => cell.length > 0)) rows.push(row);
-      row = [];
-      value = '';
+      if (row.some(c => c.length > 0)) rows.push(row);
+      row = []; value = '';
     } else {
       value += char;
     }
   }
-
   row.push(value.trim());
-  if (row.some(cell => cell.length > 0)) rows.push(row);
+  if (row.some(c => c.length > 0)) rows.push(row);
   return rows;
 }
 
-function normalizeTaskStatus(value: string): TaskStatus | null {
-  if (!value.trim()) return 'pending';
-  const key = value.toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z_]/g, '');
+function normalizeTaskStatus(v: string): TaskStatus | null {
+  if (!v.trim()) return 'pending';
+  const key = v.toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z_]/g, '');
   return TASK_STATUS_ALIASES[key] || null;
 }
-
-function normalizeTaskHeader(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+function normalizeHeader(v: string) {
+  return v.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
-
-function isValidIsoDate(value: string) {
-  return !value || /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
+function isValidIsoDate(v: string) { return !v || /^\d{4}-\d{2}-\d{2}$/.test(v); }
 
 function buildTaskUploadRows(text: string): { rows: TaskUploadRow[]; error: string | null } {
   const csvRows = parseCsv(text);
   if (csvRows.length < 2) return { rows: [], error: 'Upload a CSV with a header row and at least one task.' };
-
-  const headers = csvRows[0].map(normalizeTaskHeader);
-  const headerIndex = (names: string[]) => names.map(name => headers.indexOf(name)).find(index => index >= 0) ?? -1;
-  const titleIndex = headerIndex(['title', 'task', 'task_title']);
-
-  if (titleIndex < 0) return { rows: [], error: 'The CSV must include a Title column.' };
-
-  const descriptionIndex = headerIndex(['description', 'details', 'notes']);
-  const startDateIndex = headerIndex(['start_date', 'start']);
-  const dueDateIndex = headerIndex(['due_date', 'end_date', 'deadline', 'due']);
-  const assignedToIndex = headerIndex(['assigned_to', 'assignee', 'owner']);
-  const statusIndex = headerIndex(['status']);
-
-  const rows = csvRows.slice(1).map((csvRow, index) => {
-    const statusValue = statusIndex >= 0 ? csvRow[statusIndex] || '' : '';
-    const status = normalizeTaskStatus(statusValue);
-    const taskRow: TaskUploadRow = {
-      rowNumber: index + 2,
-      title: csvRow[titleIndex]?.trim() || '',
-      description: descriptionIndex >= 0 ? csvRow[descriptionIndex]?.trim() || '' : '',
-      start_date: startDateIndex >= 0 ? csvRow[startDateIndex]?.trim() || '' : '',
-      end_date: dueDateIndex >= 0 ? csvRow[dueDateIndex]?.trim() || '' : '',
-      assigned_to: assignedToIndex >= 0 ? csvRow[assignedToIndex]?.trim() || '' : '',
-      status: status || 'pending',
+  const headers = csvRows[0].map(normalizeHeader);
+  const idx = (names: string[]) => names.map(n => headers.indexOf(n)).find(i => i >= 0) ?? -1;
+  const titleIdx   = idx(['title','task','task_title']);
+  if (titleIdx < 0) return { rows: [], error: 'The CSV must include a Title column.' };
+  const descIdx   = idx(['description','details','notes']);
+  const startIdx  = idx(['start_date','start']);
+  const dueIdx    = idx(['due_date','end_date','deadline','due']);
+  const assignIdx = idx(['assigned_to','assignee','owner']);
+  const statusIdx = idx(['status']);
+  const rows = csvRows.slice(1).map((r, i) => {
+    const sv = statusIdx >= 0 ? r[statusIdx] || '' : '';
+    const status = normalizeTaskStatus(sv);
+    const row: TaskUploadRow = {
+      rowNumber: i + 2,
+      title:       r[titleIdx]?.trim()   || '',
+      description: descIdx  >= 0 ? r[descIdx]?.trim()  || '' : '',
+      start_date:  startIdx >= 0 ? r[startIdx]?.trim() || '' : '',
+      end_date:    dueIdx   >= 0 ? r[dueIdx]?.trim()   || '' : '',
+      assigned_to: assignIdx>= 0 ? r[assignIdx]?.trim()|| '' : '',
+      status:      status || 'pending',
       errors: [],
     };
-
-    if (!taskRow.title) taskRow.errors.push('Title is required.');
-    if (!status) taskRow.errors.push('Status must be Not Started, In Progress, Completed, or Cancelled.');
-    if (!isValidIsoDate(taskRow.start_date)) taskRow.errors.push('Start Date must use YYYY-MM-DD.');
-    if (!isValidIsoDate(taskRow.end_date)) taskRow.errors.push('Due Date must use YYYY-MM-DD.');
-    if (taskRow.start_date && taskRow.end_date && taskRow.end_date < taskRow.start_date) {
-      taskRow.errors.push('Due Date cannot be before Start Date.');
-    }
-
-    return taskRow;
-  }).filter(row => row.title || row.description || row.start_date || row.end_date || row.assigned_to);
-
-  if (rows.length === 0) return { rows: [], error: 'No task rows were found in the CSV.' };
+    if (!row.title) row.errors.push('Title is required.');
+    if (!status)    row.errors.push('Invalid status value.');
+    if (!isValidIsoDate(row.start_date)) row.errors.push('Start Date must use YYYY-MM-DD.');
+    if (!isValidIsoDate(row.end_date))   row.errors.push('Due Date must use YYYY-MM-DD.');
+    if (row.start_date && row.end_date && row.end_date < row.start_date)
+      row.errors.push('Due Date cannot be before Start Date.');
+    return row;
+  }).filter(r => r.title || r.description || r.start_date || r.end_date || r.assigned_to);
+  if (rows.length === 0) return { rows: [], error: 'No task rows found in the CSV.' };
   return { rows, error: null };
 }
 
-function sortTasksByStartDateDesc(taskList: ProjectTask[]) {
-  return [...taskList].sort((a, b) => {
+function sortTasksByStartDateDesc(list: EnhancedProjectTask[]) {
+  return [...list].sort((a, b) => {
     const aDate = a.start_date ?? '';
     const bDate = b.start_date ?? '';
     if (aDate && bDate && aDate !== bDate) return bDate.localeCompare(aDate);
@@ -196,107 +158,103 @@ function sortTasksByStartDateDesc(taskList: ProjectTask[]) {
   });
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+const TASK_VIEW_KEY = 'sabtech_task_view';
+
 export default function ProjectProfilePage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
+  const router  = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
 
-  const [project, setProject]       = useState<Project & { client: Client } | null>(null);
-  const [invoices, setInvoices]     = useState<Invoice[]>([]);
-  const [schedules, setSchedules]   = useState<InvoiceSchedule[]>([]);
-  const [tasks, setTasks]           = useState<ProjectTask[]>([]);
-  const [tab, setTab]               = useState<Tab>('overview');
-  const [loading, setLoading]       = useState(true);
+  // ── Core state ─────────────────────────────────────────────────────────────
+  const [project,   setProject]   = useState<Project & { client: Client } | null>(null);
+  const [invoices,  setInvoices]  = useState<Invoice[]>([]);
+  const [schedules, setSchedules] = useState<InvoiceSchedule[]>([]);
+  const [tasks,     setTasks]     = useState<EnhancedProjectTask[]>([]);
+  const [tab,       setTab]       = useState<Tab>('overview');
+  const [loading,   setLoading]   = useState(true);
 
-  // Edit project modal
+  // ── View mode ──────────────────────────────────────────────────────────────
+  const [taskView, setTaskView] = useState<TaskViewMode>(() => {
+    if (typeof window !== 'undefined') {
+      return (window.localStorage.getItem(TASK_VIEW_KEY) as TaskViewMode) || 'list';
+    }
+    return 'list';
+  });
+  const [taskFilters, setTaskFilters] = useState<TaskFilters>(EMPTY_FILTERS);
+
+  function handleViewChange(v: TaskViewMode) {
+    setTaskView(v);
+    if (typeof window !== 'undefined') window.localStorage.setItem(TASK_VIEW_KEY, v);
+  }
+
+  // ── Task drawer ────────────────────────────────────────────────────────────
+  const [drawerOpen,          setDrawerOpen]          = useState(false);
+  const [drawerTask,          setDrawerTask]          = useState<EnhancedProjectTask | null>(null);
+  const [drawerDefaultStatus, setDrawerDefaultStatus] = useState<TaskStatus | undefined>(undefined);
+  const [savingDrawer,        setSavingDrawer]        = useState(false);
+
+  // ── Project edit modal ─────────────────────────────────────────────────────
   const [showEditProject, setShowEditProject] = useState(false);
-  const [editProjectForm, setEditProjectForm] = useState<{
-    project_name: string;
-    project_manager: string;
-    status: Project['status'];
-    start_date: string;
-    end_date: string;
-    total_contract_amount: string;
-    description: string;
-  }>({
-    project_name: '', project_manager: '', status: 'active',
+  const [editProjectForm, setEditProjectForm] = useState({
+    project_name: '', project_manager: '', status: 'active' as Project['status'],
     start_date: '', end_date: '', total_contract_amount: '', description: '',
   });
-  const [savingProject, setSavingProject]   = useState(false);
-  const [projectToast, setProjectToast]     = useState<{ msg: string; ok: boolean } | null>(null);
+  const [savingProject, setSavingProject] = useState(false);
+  const [projectToast,  setProjectToast]  = useState<{ msg: string; ok: boolean } | null>(null);
 
-  // Schedule form
+  // ── Schedule modal ─────────────────────────────────────────────────────────
   const [showScheduleForm, setShowScheduleForm] = useState(false);
-  const [scheduleForm, setScheduleForm]         = useState({ schedule_name: '', description: '', percentage: '', fixed_amount: '', due_date: '' });
-  const [savingSchedule, setSavingSchedule]     = useState(false);
+  const [scheduleForm, setScheduleForm] = useState({ schedule_name: '', description: '', percentage: '', fixed_amount: '', due_date: '' });
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
-  // Task modals
-  const [showTaskForm, setShowTaskForm]       = useState(false);
-  const [editingTask, setEditingTask]         = useState<ProjectTask | null>(null);
-  const [taskForm, setTaskForm]               = useState(emptyTaskForm());
-  const [savingTask, setSavingTask]           = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [showTaskUpload, setShowTaskUpload]   = useState(false);
+  // ── CSV Upload ─────────────────────────────────────────────────────────────
+  const [showTaskUpload,    setShowTaskUpload]    = useState(false);
   const [taskUploadFileName, setTaskUploadFileName] = useState('');
-  const [taskUploadRows, setTaskUploadRows]   = useState<TaskUploadRow[]>([]);
-  const [taskUploadError, setTaskUploadError] = useState<string | null>(null);
-  const [savingTaskUpload, setSavingTaskUpload] = useState(false);
+  const [taskUploadRows,    setTaskUploadRows]    = useState<TaskUploadRow[]>([]);
+  const [taskUploadError,   setTaskUploadError]   = useState<string | null>(null);
+  const [savingTaskUpload,  setSavingTaskUpload]  = useState(false);
+
+  // ── Confirm delete ─────────────────────────────────────────────────────────
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const today = new Date().toISOString().slice(0, 10);
 
+  // ── Data loading ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     if (companyLoading) return;
     if (!activeCompanyId) {
-      setProject(null);
-      setInvoices([]);
-      setSchedules([]);
-      setTasks([]);
-      setLoading(false);
+      setProject(null); setInvoices([]); setSchedules([]); setTasks([]); setLoading(false);
       return;
     }
-
     setLoading(true);
     const [{ data: proj }, { data: inv }, { data: sched }, { data: tsk }] = await Promise.all([
-      supabase
-        .from('projects')
-        .select('*, client:clients(*)')
-        .eq('id', id)
-        .eq('company_id', activeCompanyId)
-        .single(),
-      supabase
-        .from('invoices')
-        .select('*')
-        .eq('project_id', id)
-        .eq('company_id', activeCompanyId)
-        .order('issue_date', { ascending: false }),
-      supabase
-        .from('invoice_schedules')
-        .select('*')
-        .eq('project_id', id)
-        .eq('company_id', activeCompanyId)
-        .order('sort_order'),
-      supabase
-        .from('project_tasks')
-        .select('*')
-        .eq('project_id', id)
-        .eq('company_id', activeCompanyId)
-        .order('start_date', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false }),
+      supabase.from('projects').select('*, client:clients(*)').eq('id', id).eq('company_id', activeCompanyId).single(),
+      supabase.from('invoices').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('issue_date', { ascending: false }),
+      supabase.from('invoice_schedules').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('sort_order'),
+      supabase.from('project_tasks').select('*').eq('project_id', id).eq('company_id', activeCompanyId)
+        .order('sort_order').order('start_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
     ]);
     setProject(proj as Project & { client: Client });
     setInvoices(inv || []);
     setSchedules(sched || []);
-    setTasks(sortTasksByStartDateDesc((tsk || []) as ProjectTask[]));
+    // Normalise tasks — ensure new fields have defaults for rows created before migration
+    setTasks(sortTasksByStartDateDesc((tsk || []).map((t: Record<string, unknown>) => ({
+      ...t,
+      priority:      t.priority      ?? 'medium',
+      progress:      t.progress      ?? 0,
+      sort_order:    t.sort_order    ?? 0,
+      parent_task_id: t.parent_task_id ?? null,
+      tags:          Array.isArray(t.tags) ? t.tags : [],
+    })) as EnhancedProjectTask[]));
     setLoading(false);
   }, [activeCompanyId, companyLoading, id, supabase]);
 
   useEffect(() => {
     void Promise.resolve().then(() => {
-      setProject(null);
-      setInvoices([]);
-      setSchedules([]);
-      setTasks([]);
+      setProject(null); setInvoices([]); setSchedules([]); setTasks([]);
       return load();
     });
   }, [load]);
@@ -323,23 +281,19 @@ export default function ProjectProfilePage() {
     const payload: Partial<Project> = {
       project_name:          editProjectForm.project_name.trim(),
       project_manager:       editProjectForm.project_manager.trim() || null,
-      status:                editProjectForm.status as Project['status'],
+      status:                editProjectForm.status,
       start_date:            editProjectForm.start_date || null,
       end_date:              editProjectForm.end_date || null,
       total_contract_amount: editProjectForm.total_contract_amount ? parseFloat(editProjectForm.total_contract_amount) : null,
       description:           editProjectForm.description.trim() || null,
     };
-    const { error } = await supabase
-      .from('projects')
-      .update(payload)
-      .eq('id', id)
-      .eq('company_id', project.company_id);
+    const { error } = await supabase.from('projects').update(payload).eq('id', id).eq('company_id', project.company_id);
     if (error) {
       setProjectToast({ msg: error.message, ok: false });
     } else {
       setProject(p => p ? { ...p, ...payload } : p);
       setShowEditProject(false);
-      setProjectToast({ msg: 'Project updated successfully.', ok: true });
+      setProjectToast({ msg: 'Project updated.', ok: true });
     }
     setSavingProject(false);
     setTimeout(() => setProjectToast(null), 3000);
@@ -351,12 +305,11 @@ export default function ProjectProfilePage() {
     if (!project) return;
     setSavingSchedule(true);
     const { error } = await supabase.from('invoice_schedules').insert({
-      company_id: project.company_id,
-      project_id:   id,
+      company_id: project.company_id, project_id: id,
       schedule_name: scheduleForm.schedule_name,
       description:   scheduleForm.description || null,
-      percentage:    scheduleForm.percentage ? parseFloat(scheduleForm.percentage) : null,
-      fixed_amount:  scheduleForm.fixed_amount ? parseFloat(scheduleForm.fixed_amount) : null,
+      percentage:    scheduleForm.percentage  ? parseFloat(scheduleForm.percentage)  : null,
+      fixed_amount:  scheduleForm.fixed_amount? parseFloat(scheduleForm.fixed_amount): null,
       due_date:      scheduleForm.due_date || null,
       sort_order:    schedules.length,
     });
@@ -364,184 +317,185 @@ export default function ProjectProfilePage() {
       setShowScheduleForm(false);
       setScheduleForm({ schedule_name: '', description: '', percentage: '', fixed_amount: '', due_date: '' });
       load();
-    } else {
-      alert('Error: ' + error.message);
-    }
+    } else { alert('Error: ' + error.message); }
     setSavingSchedule(false);
   }
 
-  // ── Task CRUD ──────────────────────────────────────────────────────────────
-  function openAddTask() {
-    setEditingTask(null);
-    setTaskForm(emptyTaskForm());
-    setShowTaskForm(true);
+  // ── Task CRUD (unified) ────────────────────────────────────────────────────
+  function openAddTask(defaultStatus?: TaskStatus) {
+    setDrawerTask(null);
+    setDrawerDefaultStatus(defaultStatus ?? 'pending');
+    setDrawerOpen(true);
   }
 
-  function openTaskUpload() {
-    setTaskUploadFileName('');
-    setTaskUploadRows([]);
-    setTaskUploadError(null);
-    setShowTaskUpload(true);
+  function openEditTask(task: EnhancedProjectTask) {
+    setDrawerTask(task);
+    setDrawerDefaultStatus(undefined);
+    setDrawerOpen(true);
   }
 
-  function downloadTaskTemplate() {
-    const csv = `${TASK_TEMPLATE_HEADERS.map(encodeCsvCell).join(',')}\r\n`;
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'project-task-upload-template.csv';
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function readTaskUploadFile(file: File) {
-    setTaskUploadFileName(file.name);
-    setTaskUploadError(null);
-    setTaskUploadRows([]);
-
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      setTaskUploadError('Please upload a CSV file using the task template.');
-      return;
-    }
-
-    const text = await file.text();
-    const { rows, error } = buildTaskUploadRows(text);
-    setTaskUploadRows(rows);
-    setTaskUploadError(error);
-  }
-
-  function openEditTask(task: ProjectTask) {
-    setEditingTask(task);
-    setTaskForm({
-      title:           task.title,
-      description:     task.description || '',
-      start_date:      task.start_date || '',
-      end_date:        task.end_date || '',
-      assigned_to:     task.assigned_to || '',
-      status:          task.status,
-      is_billable:     task.is_billable ?? false,
-      estimated_hours: task.estimated_hours?.toString() ?? '',
-    });
-    setShowTaskForm(true);
-  }
-
-  async function saveTask(e: React.FormEvent) {
-    e.preventDefault();
+  async function saveTaskFromDrawer(values: TaskFormValues) {
     if (!project) return;
-    setSavingTask(true);
+    setSavingDrawer(true);
+
+    const tagsArray = values.tags
+      ? values.tags.split(',').map(t => t.trim()).filter(Boolean)
+      : [];
+
     const payload = {
-      title:           taskForm.title.trim(),
-      description:     taskForm.description.trim() || null,
-      start_date:      taskForm.start_date || null,
-      end_date:        taskForm.end_date || null,
-      assigned_to:     taskForm.assigned_to.trim() || null,
-      status:          taskForm.status,
-      is_billable:     taskForm.is_billable,
-      estimated_hours: taskForm.estimated_hours ? parseFloat(taskForm.estimated_hours) : null,
+      title:           values.title.trim(),
+      description:     values.description.trim() || null,
+      status:          values.status,
+      priority:        values.priority,
+      progress:        values.status === 'completed' ? 100 : values.progress,
+      start_date:      values.start_date || null,
+      end_date:        values.end_date   || null,
+      assigned_to:     values.assigned_to.trim() || null,
+      is_billable:     values.is_billable,
+      estimated_hours: values.estimated_hours ? parseFloat(values.estimated_hours) : null,
+      tags:            tagsArray,
     };
 
-    if (editingTask) {
+    if (drawerTask) {
+      // Update
       const { error } = await supabase
         .from('project_tasks')
         .update({ ...payload, updated_at: new Date().toISOString() })
-        .eq('id', editingTask.id)
+        .eq('id', drawerTask.id)
         .eq('company_id', project.company_id);
       if (!error) {
-        setTasks(ts => sortTasksByStartDateDesc(ts.map(t => t.id === editingTask.id ? { ...t, ...payload } : t)));
+        setTasks(ts => sortTasksByStartDateDesc(
+          ts.map(t => t.id === drawerTask.id ? { ...t, ...payload } : t)
+        ));
+        setProjectToast({ msg: 'Task updated.', ok: true });
+        setTimeout(() => setProjectToast(null), 2500);
       }
     } else {
+      // Create
       const { data, error } = await supabase
         .from('project_tasks')
-        .insert({ ...payload, company_id: project.company_id, project_id: id })
+        .insert({ ...payload, company_id: project.company_id, project_id: id, sort_order: tasks.length })
         .select()
         .single();
       if (!error && data) {
-        setTasks(ts => sortTasksByStartDateDesc([...ts, data as ProjectTask]));
+        const newTask = {
+          ...data,
+          priority:      data.priority       ?? 'medium',
+          progress:      data.progress       ?? 0,
+          sort_order:    data.sort_order     ?? tasks.length,
+          parent_task_id: data.parent_task_id ?? null,
+          tags:          Array.isArray(data.tags) ? data.tags : [],
+        } as EnhancedProjectTask;
+        setTasks(ts => sortTasksByStartDateDesc([...ts, newTask]));
+        setProjectToast({ msg: 'Task created.', ok: true });
+        setTimeout(() => setProjectToast(null), 2500);
       }
     }
 
-    setSavingTask(false);
-    setShowTaskForm(false);
-    setEditingTask(null);
-  }
-
-  async function saveTaskUpload() {
-    if (!project) return;
-    const validRows = taskUploadRows.filter(row => row.errors.length === 0);
-    if (validRows.length === 0) return;
-
-    setSavingTaskUpload(true);
-    const payload = validRows.map(row => ({
-      company_id:   project.company_id,
-      project_id:   id,
-      title:        row.title,
-      description:  row.description || null,
-      start_date:   row.start_date || null,
-      end_date:     row.end_date || null,
-      assigned_to:  row.assigned_to || null,
-      status:       row.status,
-    }));
-
-    const { data, error } = await supabase
-      .from('project_tasks')
-      .insert(payload)
-      .select();
-
-    if (error) {
-      setTaskUploadError(error.message);
-    } else {
-      setTasks(ts => sortTasksByStartDateDesc([...ts, ...((data || []) as ProjectTask[])]));
-      setShowTaskUpload(false);
-      setProjectToast({ msg: `${validRows.length} task${validRows.length === 1 ? '' : 's'} uploaded successfully.`, ok: true });
-      setTimeout(() => setProjectToast(null), 3000);
-    }
-
-    setSavingTaskUpload(false);
-  }
-
-  async function updateTaskStatus(taskId: string, newStatus: TaskStatus) {
-    if (!project) return;
-    setTasks(ts => sortTasksByStartDateDesc(ts.map(t => t.id === taskId ? { ...t, status: newStatus } : t)));
-    await supabase
-      .from('project_tasks')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', taskId)
-      .eq('company_id', project.company_id);
+    setSavingDrawer(false);
+    setDrawerOpen(false);
   }
 
   async function deleteTask(taskId: string) {
     if (!project) return;
-    await supabase
-      .from('project_tasks')
-      .delete()
-      .eq('id', taskId)
-      .eq('company_id', project.company_id);
+    await supabase.from('project_tasks').delete().eq('id', taskId).eq('company_id', project.company_id);
     setTasks(ts => ts.filter(t => t.id !== taskId));
     setConfirmDeleteId(null);
+    setDrawerOpen(false);
+    setProjectToast({ msg: 'Task deleted.', ok: true });
+    setTimeout(() => setProjectToast(null), 2500);
   }
 
-  // ── Derived values ────────────────────────────────────────────────────────
-  if (loading) return <div className="p-12 text-center text-slate-400">Loading...</div>;
+  async function updateTaskStatus(taskId: string, newStatus: TaskStatus) {
+    if (!project) return;
+    setTasks(ts => sortTasksByStartDateDesc(ts.map(t =>
+      t.id === taskId
+        ? { ...t, status: newStatus, progress: newStatus === 'completed' ? 100 : t.progress }
+        : t
+    )));
+    await supabase.from('project_tasks')
+      .update({ status: newStatus, progress: newStatus === 'completed' ? 100 : undefined, updated_at: new Date().toISOString() })
+      .eq('id', taskId).eq('company_id', project.company_id);
+  }
+
+  // ── CSV Upload ─────────────────────────────────────────────────────────────
+  function downloadTaskTemplate() {
+    const csv = `${TASK_TEMPLATE_HEADERS.map(encodeCsvCell).join(',')}\r\n`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = 'project-task-upload-template.csv'; link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function readTaskUploadFile(file: File) {
+    setTaskUploadFileName(file.name); setTaskUploadError(null); setTaskUploadRows([]);
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setTaskUploadError('Please upload a CSV file.'); return;
+    }
+    const text = await file.text();
+    const { rows, error } = buildTaskUploadRows(text);
+    setTaskUploadRows(rows); setTaskUploadError(error);
+  }
+
+  async function saveTaskUpload() {
+    if (!project) return;
+    const validRows = taskUploadRows.filter(r => r.errors.length === 0);
+    if (validRows.length === 0) return;
+    setSavingTaskUpload(true);
+    const payload = validRows.map((r, i) => ({
+      company_id:  project.company_id, project_id: id,
+      title:       r.title, description: r.description || null,
+      start_date:  r.start_date || null, end_date: r.end_date || null,
+      assigned_to: r.assigned_to || null, status: r.status,
+      priority: 'medium', progress: 0, sort_order: tasks.length + i,
+      tags: [],
+    }));
+    const { data, error } = await supabase.from('project_tasks').insert(payload).select();
+    if (error) {
+      setTaskUploadError(error.message);
+    } else {
+      const newTasks = (data || []).map((t: Record<string, unknown>) => ({
+        ...t,
+        priority:      t.priority      ?? 'medium',
+        progress:      t.progress      ?? 0,
+        sort_order:    t.sort_order    ?? 0,
+        parent_task_id: t.parent_task_id ?? null,
+        tags:          Array.isArray(t.tags) ? t.tags : [],
+      })) as EnhancedProjectTask[];
+      setTasks(ts => sortTasksByStartDateDesc([...ts, ...newTasks]));
+      setShowTaskUpload(false);
+      setProjectToast({ msg: `${validRows.length} task${validRows.length === 1 ? '' : 's'} uploaded.`, ok: true });
+      setTimeout(() => setProjectToast(null), 3000);
+    }
+    setSavingTaskUpload(false);
+  }
+
+  // ── Early returns ──────────────────────────────────────────────────────────
+  if (loading) return <div className="p-12 text-center text-slate-400">Loading…</div>;
   if (!project) return <div className="p-12 text-center text-red-500">Project not found</div>;
 
+  // ── Derived values ─────────────────────────────────────────────────────────
   const totalBilled      = invoices.reduce((s, i) => s + (i.total_amount || 0), 0);
-  const totalPaid        = invoices.reduce((s, i) => s + (i.total_paid || 0), 0);
-  const totalOutstanding = invoices.reduce((s, i) => s + (i.balance_due || 0), 0);
+  const totalPaid        = invoices.reduce((s, i) => s + (i.total_paid   || 0), 0);
+  const totalOutstanding = invoices.reduce((s, i) => s + (i.balance_due  || 0), 0);
+
+  const filteredTasks = applyFilters(tasks, taskFilters);
 
   const taskSummary = {
     total:       tasks.length,
-    pending:     tasks.filter(t => t.status === 'pending').length,
-    in_progress: tasks.filter(t => t.status === 'in_progress').length,
+    pending:     tasks.filter(t => t.status === 'pending' || t.status === 'backlog').length,
+    in_progress: tasks.filter(t => t.status === 'in_progress' || t.status === 'in_review').length,
     completed:   tasks.filter(t => t.status === 'completed').length,
+    blocked:     tasks.filter(t => t.status === 'blocked').length,
     overdue:     tasks.filter(t => t.end_date && t.end_date < today && t.status !== 'completed' && t.status !== 'cancelled').length,
   };
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'tasks',    label: `Tasks (${tasks.length})` },
-    { id: 'invoices', label: `Invoices (${invoices.length})` },
-    { id: 'schedule', label: 'Billing Schedule' },
+    { id: 'overview',  label: 'Overview' },
+    { id: 'tasks',     label: `Tasks (${tasks.length})` },
+    { id: 'invoices',  label: `Invoices (${invoices.length})` },
+    { id: 'schedule',  label: 'Billing Schedule' },
   ];
 
   const statusColor: Record<string, string> = {
@@ -550,9 +504,11 @@ export default function ProjectProfilePage() {
     completed: 'bg-blue-100 text-blue-700',
     cancelled: 'bg-slate-100 text-slate-500',
   };
-  const taskUploadInvalidCount = taskUploadRows.filter(row => row.errors.length > 0).length;
-  const taskUploadValidCount = taskUploadRows.length - taskUploadInvalidCount;
 
+  const taskUploadInvalidCount = taskUploadRows.filter(r => r.errors.length > 0).length;
+  const taskUploadValidCount   = taskUploadRows.length - taskUploadInvalidCount;
+
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div>
       {/* Toast */}
@@ -565,6 +521,7 @@ export default function ProjectProfilePage() {
         </div>
       )}
 
+      {/* Back + Header */}
       <div className="mb-6">
         <button onClick={() => router.back()} className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 mb-4">
           <ArrowLeft className="h-4 w-4" /> Back to Projects
@@ -591,13 +548,13 @@ export default function ProjectProfilePage() {
         />
       </div>
 
-      {/* Billing Summary */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      {/* Billing summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         {[
           { label: 'Contract Amount', value: project.total_contract_amount ? formatCurrency(project.total_contract_amount) : '—', color: 'bg-slate-50 border-slate-200 text-slate-800' },
-          { label: 'Total Billed',    value: formatCurrency(totalBilled),      color: 'bg-blue-50 border-blue-200 text-blue-800' },
-          { label: 'Total Paid',      value: formatCurrency(totalPaid),         color: 'bg-green-50 border-green-200 text-green-800' },
-          { label: 'Outstanding',     value: formatCurrency(totalOutstanding),  color: 'bg-amber-50 border-amber-200 text-amber-800' },
+          { label: 'Total Billed',    value: formatCurrency(totalBilled),     color: 'bg-blue-50 border-blue-200 text-blue-800' },
+          { label: 'Total Paid',      value: formatCurrency(totalPaid),        color: 'bg-green-50 border-green-200 text-green-800' },
+          { label: 'Outstanding',     value: formatCurrency(totalOutstanding), color: 'bg-amber-50 border-amber-200 text-amber-800' },
         ].map(({ label, value, color }) => (
           <div key={label} className={`rounded-xl border px-5 py-4 ${color}`}>
             <p className="text-xs font-medium opacity-70">{label}</p>
@@ -647,166 +604,198 @@ export default function ProjectProfilePage() {
       {/* ── TASKS ── */}
       {tab === 'tasks' && (
         <div className="space-y-4">
-          {/* Task summary bar */}
-          <div className="grid grid-cols-5 gap-3">
-            {[
-              { label: 'Total',       value: taskSummary.total,       color: 'text-slate-700 bg-slate-50 border-slate-200' },
-              { label: 'Not Started', value: taskSummary.pending,     color: 'text-slate-600 bg-slate-50 border-slate-200' },
-              { label: 'In Progress', value: taskSummary.in_progress, color: 'text-blue-700 bg-blue-50 border-blue-200' },
-              { label: 'Completed',   value: taskSummary.completed,   color: 'text-green-700 bg-green-50 border-green-200' },
-              { label: 'Overdue',     value: taskSummary.overdue,     color: taskSummary.overdue > 0 ? 'text-red-700 bg-red-50 border-red-200' : 'text-slate-500 bg-slate-50 border-slate-200' },
-            ].map(({ label, value, color }) => (
-              <div key={label} className={`rounded-xl border px-4 py-3 ${color}`}>
-                <p className="text-xs font-medium opacity-70 mb-0.5">{label}</p>
-                <p className="text-xl font-bold">{value}</p>
-              </div>
-            ))}
-          </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <button
-              onClick={downloadTaskTemplate}
-              className="inline-flex items-center justify-center gap-2 border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm px-4 py-2 rounded-lg"
-            >
-              <Download className="h-4 w-4" /> Template
-            </button>
-            <button
-              onClick={openTaskUpload}
-              className="inline-flex items-center justify-center gap-2 border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-sm px-4 py-2 rounded-lg"
-            >
-              <Upload className="h-4 w-4" /> Bulk Upload
-            </button>
-            <button
-              onClick={openAddTask}
-              className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg"
-            >
-              <Plus className="h-4 w-4" /> Add Task
-            </button>
-          </div>
+          {/* KPI Cards */}
+          <ProjectKpiCards tasks={tasks} projectEndDate={project.end_date} />
 
-          {tasks.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400">
-              No tasks yet. Add tasks manually or convert a quotation.
+          {/* Toolbar: View switcher + filters + actions */}
+          <div className="flex flex-wrap items-center gap-3 justify-between">
+            <ProjectViewSwitcher view={taskView} onChange={handleViewChange} taskCount={filteredTasks.length} />
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={downloadTaskTemplate}
+                className="inline-flex items-center gap-1.5 border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm px-3 py-2 rounded-lg"
+                title="Download CSV template"
+              >
+                <Download className="h-3.5 w-3.5" /> Template
+              </button>
+              <button
+                onClick={() => setShowTaskUpload(true)}
+                className="inline-flex items-center gap-1.5 border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-sm px-3 py-2 rounded-lg"
+              >
+                <Upload className="h-3.5 w-3.5" /> Bulk Upload
+              </button>
+              <button
+                onClick={() => openAddTask()}
+                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg font-medium"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Task
+              </button>
             </div>
-          ) : (
+          </div>
+
+          {/* Filters */}
+          <ProjectFilters tasks={tasks} filters={taskFilters} onChange={setTaskFilters} />
+
+          {/* ── LIST VIEW ── */}
+          {taskView === 'list' && (
             <>
-              {/* Desktop table */}
-              <div className="hidden md:block bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50 border-b border-slate-200">
-                    <tr>
-                      {['Task', 'Dates', 'Assigned To', 'Status', ''].map(h => (
-                        <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {tasks.map(task => {
-                      const isOverdue = !!task.end_date && task.end_date < today && task.status !== 'completed' && task.status !== 'cancelled';
-                      return (
-                        <tr key={task.id} className={`group ${isOverdue ? 'bg-red-50/60' : 'hover:bg-slate-50'}`}>
-                          <td className="px-4 py-3 max-w-[260px]">
-                            <div className="flex items-start gap-2">
-                              <div>
-                                <p className={`font-medium ${isOverdue ? 'text-red-700' : 'text-slate-900'}`}>{task.title}</p>
-                                {task.description && (
-                                  <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{task.description}</p>
-                                )}
+              {filteredTasks.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400">
+                  {tasks.length === 0 ? 'No tasks yet. Add tasks manually or bulk upload a CSV.' : 'No tasks match the current filters.'}
+                </div>
+              ) : (
+                <>
+                  {/* Desktop table */}
+                  <div className="hidden md:block bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          {['Task', 'Priority', 'Progress', 'Dates', 'Assigned To', 'Status', ''].map(h => (
+                            <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredTasks.map(task => {
+                          const isOverdue = !!task.end_date && task.end_date < today && task.status !== 'completed' && task.status !== 'cancelled';
+                          return (
+                            <tr key={task.id} className={`group cursor-pointer ${isOverdue ? 'bg-red-50/60' : 'hover:bg-slate-50'}`}
+                              onClick={() => openEditTask(task)}>
+                              <td className="px-4 py-3 max-w-[220px]">
+                                <p className={`font-medium ${isOverdue ? 'text-red-700' : 'text-slate-900'} truncate`}>{task.title}</p>
+                                {task.description && <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{task.description}</p>}
                                 {task.quotation_id && (
                                   <span className="inline-flex items-center gap-1 mt-1 text-xs text-purple-600 bg-purple-50 border border-purple-200 rounded px-1.5 py-0.5">
                                     <Tag className="h-2.5 w-2.5" /> From Quotation
                                   </span>
                                 )}
-                              </div>
+                                {task.tags?.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {task.tags.slice(0, 2).map(tag => (
+                                      <span key={tag} className="px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500 rounded">{tag}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
+                                  task.priority === 'critical' ? 'bg-red-100 text-red-600' :
+                                  task.priority === 'high'     ? 'bg-orange-100 text-orange-600' :
+                                  task.priority === 'medium'   ? 'bg-amber-50 text-amber-600' :
+                                  'bg-slate-100 text-slate-500'
+                                }`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${TASK_STATUS_DOT[task.status]}`} />
+                                  {task.priority}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-blue-500 rounded-full" style={{ width: `${task.progress}%` }} />
+                                  </div>
+                                  <span className="text-xs text-gray-500 tabular-nums">{task.progress}%</span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-500" onClick={e => e.stopPropagation()}>
+                                {task.start_date && <p>Start: {formatDate(task.start_date)}</p>}
+                                {task.end_date && (
+                                  <p className={isOverdue ? 'text-red-600 font-semibold' : ''}>
+                                    Due: {formatDate(task.end_date)}{isOverdue ? ' ⚠' : ''}
+                                  </p>
+                                )}
+                                {!task.start_date && !task.end_date && <span>—</span>}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-slate-600">{task.assigned_to || '—'}</td>
+                              <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                <select
+                                  value={task.status}
+                                  onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
+                                  className={`text-xs font-medium rounded-full px-2 py-1 border-0 focus:ring-1 focus:ring-offset-0 cursor-pointer ${TASK_STATUS_COLORS[task.status]}`}
+                                >
+                                  {(Object.keys(TASK_STATUS_LABELS) as TaskStatus[]).map(s => (
+                                    <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={() => openEditTask(task)} className="p-1.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50">
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button onClick={() => setConfirmDeleteId(task.id)} className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50">
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile cards */}
+                  <div className="md:hidden space-y-3">
+                    {filteredTasks.map(task => {
+                      const isOverdue = !!task.end_date && task.end_date < today && task.status !== 'completed' && task.status !== 'cancelled';
+                      return (
+                        <div
+                          key={task.id}
+                          className={`bg-white border rounded-xl p-4 cursor-pointer ${isOverdue ? 'border-red-200 bg-red-50/40' : 'border-slate-200'}`}
+                          onClick={() => openEditTask(task)}
+                        >
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="min-w-0">
+                              <p className={`font-medium text-sm truncate ${isOverdue ? 'text-red-700' : 'text-slate-900'}`}>{task.title}</p>
+                              {task.description && <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{task.description}</p>}
                             </div>
-                          </td>
-                          <td className="px-4 py-3 text-xs text-slate-500">
-                            {task.start_date && <p>Start: {formatDate(task.start_date)}</p>}
+                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0 ${TASK_STATUS_COLORS[task.status]}`}>
+                              {TASK_STATUS_LABELS[task.status]}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
                             {task.end_date && (
-                              <p className={isOverdue ? 'text-red-600 font-semibold' : ''}>
-                                Due: {formatDate(task.end_date)}{isOverdue ? ' ⚠' : ''}
-                              </p>
+                              <span className={isOverdue ? 'text-red-600 font-semibold' : ''}>
+                                Due {formatDate(task.end_date)}{isOverdue ? ' ⚠' : ''}
+                              </span>
                             )}
-                            {!task.start_date && !task.end_date && <span>—</span>}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-slate-600">{task.assigned_to || '—'}</td>
-                          <td className="px-4 py-3">
-                            <select
-                              value={task.status}
-                              onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
-                              className={`text-xs font-medium rounded-full px-2 py-1 border-0 focus:ring-1 focus:ring-offset-0 cursor-pointer ${TASK_STATUS_STYLES[task.status]}`}
-                            >
-                              {(Object.keys(TASK_STATUS_LABELS) as TaskStatus[]).map(s => (
-                                <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => openEditTask(task)}
-                                className="p-1.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50"
-                                title="Edit"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setConfirmDeleteId(task.id)}
-                                className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
-                                title="Delete"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
+                            {task.assigned_to && <span>{task.assigned_to}</span>}
+                            <span className="ml-auto">{task.progress}%</span>
+                          </div>
+                          <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${task.progress}%` }} />
+                          </div>
+                        </div>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Mobile cards */}
-              <div className="md:hidden space-y-3">
-                {tasks.map(task => {
-                  const isOverdue = !!task.end_date && task.end_date < today && task.status !== 'completed' && task.status !== 'cancelled';
-                  return (
-                    <div key={task.id} className={`bg-white border rounded-xl p-4 ${isOverdue ? 'border-red-200 bg-red-50/40' : 'border-slate-200'}`}>
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="min-w-0">
-                          <p className={`font-medium text-sm ${isOverdue ? 'text-red-700' : 'text-slate-900'}`}>{task.title}</p>
-                          {task.description && <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{task.description}</p>}
-                          {task.quotation_id && (
-                            <span className="inline-flex items-center gap-1 mt-1 text-xs text-purple-600 bg-purple-50 border border-purple-200 rounded px-1.5 py-0.5">
-                              <Tag className="h-2.5 w-2.5" /> From Quotation
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex gap-1 shrink-0">
-                          <button onClick={() => openEditTask(task)} className="p-1.5 rounded text-slate-400 hover:text-blue-600"><Pencil className="h-3.5 w-3.5" /></button>
-                          <button onClick={() => setConfirmDeleteId(task.id)} className="p-1.5 rounded text-slate-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-2">
-                        <div className="text-xs text-slate-500">
-                          {task.end_date && <span className={isOverdue ? 'text-red-600 font-semibold' : ''}>Due {formatDate(task.end_date)}</span>}
-                          {task.assigned_to && <span className="ml-2">· {task.assigned_to}</span>}
-                        </div>
-                        <select
-                          value={task.status}
-                          onChange={e => updateTaskStatus(task.id, e.target.value as TaskStatus)}
-                          className={`text-xs font-medium rounded-full px-2 py-1 border-0 ${TASK_STATUS_STYLES[task.status]}`}
-                        >
-                          {(Object.keys(TASK_STATUS_LABELS) as TaskStatus[]).map(s => (
-                            <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                  </div>
+                </>
+              )}
             </>
+          )}
+
+          {/* ── KANBAN VIEW ── */}
+          {taskView === 'kanban' && (
+            <ProjectKanbanView
+              tasks={filteredTasks}
+              companyId={project.company_id}
+              projectId={id}
+              onTasksChange={updated => setTasks(sortTasksByStartDateDesc(updated))}
+              onEditTask={openEditTask}
+              onAddTask={openAddTask}
+            />
+          )}
+
+          {/* ── GANTT VIEW ── */}
+          {taskView === 'gantt' && (
+            <ProjectGanttView
+              tasks={filteredTasks}
+              projectStartDate={project.start_date}
+              projectEndDate={project.end_date}
+              onEditTask={openEditTask}
+            />
           )}
         </div>
       )}
@@ -817,7 +806,7 @@ export default function ProjectProfilePage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Invoice #', 'Date', 'Due Date', 'Total', 'Paid', 'Balance', 'Status', ''].map(h => (
+                {['Invoice #','Date','Due Date','Total','Paid','Balance','Status',''].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">{h}</th>
                 ))}
               </tr>
@@ -848,24 +837,18 @@ export default function ProjectProfilePage() {
       {tab === 'schedule' && (
         <div className="space-y-4">
           <div className="flex justify-end">
-            <button
-              onClick={() => setShowScheduleForm(true)}
-              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg"
-            >
+            <button onClick={() => setShowScheduleForm(true)} className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg">
               <Plus className="h-4 w-4" /> Add Schedule Line
             </button>
           </div>
-
           {schedules.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-slate-400">
-              No billing schedule defined. Add lines for deposit, milestone, and final payment.
-            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-slate-400">No billing schedule defined.</div>
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    {['Stage', 'Description', '%', 'Fixed Amount', 'Due Date', 'Status', 'Invoice', ''].map(h => (
+                    {['Stage','Description','%','Fixed Amount','Due Date','Status','Invoice',''].map(h => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">{h}</th>
                     ))}
                   </tr>
@@ -888,9 +871,9 @@ export default function ProjectProfilePage() {
                           }`}>{s.status}</span>
                         </td>
                         <td className="px-4 py-3 font-mono text-xs">
-                          {s.generated_invoice_id ? (
-                            <Link href={`/invoices/${s.generated_invoice_id}`} className="text-blue-600 hover:underline">View Invoice</Link>
-                          ) : '—'}
+                          {s.generated_invoice_id
+                            ? <Link href={`/invoices/${s.generated_invoice_id}`} className="text-blue-600 hover:underline">View Invoice</Link>
+                            : '—'}
                         </td>
                         <td className="px-4 py-3">
                           {s.status === 'pending' && (
@@ -912,18 +895,41 @@ export default function ProjectProfilePage() {
         </div>
       )}
 
-      {/* Bulk task upload modal */}
+      {/* ── TASK DRAWER ── */}
+      <ProjectTaskDrawer
+        task={drawerTask}
+        open={drawerOpen}
+        saving={savingDrawer}
+        defaultStatus={drawerDefaultStatus}
+        onClose={() => setDrawerOpen(false)}
+        onSave={saveTaskFromDrawer}
+        onDelete={id => setConfirmDeleteId(id)}
+      />
+
+      {/* ── CONFIRM DELETE MODAL ── */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-lg font-semibold text-slate-900 mb-2">Delete Task?</h2>
+            <p className="text-sm text-slate-500 mb-6">This action cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmDeleteId(null)} className="flex-1 border border-slate-200 text-slate-700 py-2 rounded-lg text-sm">Cancel</button>
+              <button onClick={() => deleteTask(confirmDeleteId)} className="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-medium">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BULK UPLOAD MODAL ── */}
       {showTaskUpload && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between p-6 border-b border-slate-200">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Bulk Upload Tasks</h2>
-                <p className="text-xs text-slate-500 mt-1">Use the standard CSV template, then review the rows before uploading.</p>
+                <p className="text-xs text-slate-500 mt-1">Use the CSV template, review rows, then upload.</p>
               </div>
-              <button onClick={() => setShowTaskUpload(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100">
-                <X className="h-5 w-5" />
-              </button>
+              <button onClick={() => setShowTaskUpload(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
 
             <div className="p-6 space-y-5 overflow-y-auto">
@@ -932,47 +938,22 @@ export default function ProjectProfilePage() {
                   <FileSpreadsheet className="h-7 w-7 text-blue-600" />
                   <span className="mt-2 text-sm font-medium text-slate-800">{taskUploadFileName || 'Choose a CSV file'}</span>
                   <span className="mt-1 text-xs text-slate-500">Columns: Title, Description, Start Date, Due Date, Assigned To, Status</span>
-                  <input
-                    type="file"
-                    accept=".csv,text/csv"
-                    className="sr-only"
-                    onChange={e => {
-                      const file = e.target.files?.[0];
-                      if (file) void readTaskUploadFile(file);
-                      e.currentTarget.value = '';
-                    }}
-                  />
+                  <input type="file" accept=".csv,text/csv" className="sr-only" onChange={e => { const f = e.target.files?.[0]; if (f) void readTaskUploadFile(f); e.currentTarget.value = ''; }} />
                 </label>
-                <button
-                  type="button"
-                  onClick={downloadTaskTemplate}
-                  className="inline-flex h-28 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
+                <button type="button" onClick={downloadTaskTemplate} className="inline-flex h-28 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">
                   <Download className="h-4 w-4" /> Download Template
                 </button>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="grid gap-3 text-sm sm:grid-cols-3">
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Ready</p>
-                    <p className="mt-1 text-lg font-bold text-green-700">{taskUploadValidCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Needs Review</p>
-                    <p className="mt-1 text-lg font-bold text-red-600">{taskUploadInvalidCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Default Status</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-800">Not Started</p>
-                  </div>
-                </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 grid gap-3 text-sm sm:grid-cols-3">
+                <div><p className="text-xs font-medium text-slate-500">Ready</p><p className="mt-1 text-lg font-bold text-green-700">{taskUploadValidCount}</p></div>
+                <div><p className="text-xs font-medium text-slate-500">Needs Review</p><p className="mt-1 text-lg font-bold text-red-600">{taskUploadInvalidCount}</p></div>
+                <div><p className="text-xs font-medium text-slate-500">Default Priority</p><p className="mt-1 text-sm font-semibold text-slate-800">Medium</p></div>
               </div>
 
               {taskUploadError && (
                 <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{taskUploadError}</span>
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {taskUploadError}
                 </div>
               )}
 
@@ -982,35 +963,30 @@ export default function ProjectProfilePage() {
                     <p className="text-xs font-medium uppercase text-slate-500">Preview</p>
                   </div>
                   <div className="max-h-72 overflow-auto">
-                    <table className="w-full min-w-[760px] text-sm">
+                    <table className="w-full min-w-[640px] text-sm">
                       <thead className="bg-white border-b border-slate-100">
-                        <tr>
-                          {['Row', 'Title', 'Due Date', 'Assigned To', 'Status', 'Validation'].map(h => (
-                            <th key={h} className="px-4 py-3 text-left text-xs font-medium uppercase text-slate-500">{h}</th>
-                          ))}
-                        </tr>
+                        <tr>{['Row','Title','Due Date','Assigned To','Status','Validation'].map(h => (
+                          <th key={h} className="px-4 py-3 text-left text-xs font-medium uppercase text-slate-500">{h}</th>
+                        ))}</tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {taskUploadRows.map(row => (
                           <tr key={row.rowNumber} className={row.errors.length > 0 ? 'bg-red-50/60' : 'hover:bg-slate-50'}>
                             <td className="px-4 py-3 text-xs text-slate-500">{row.rowNumber}</td>
-                            <td className="px-4 py-3">
-                              <p className="font-medium text-slate-900">{row.title || '-'}</p>
-                              {row.description && <p className="mt-0.5 line-clamp-1 text-xs text-slate-400">{row.description}</p>}
-                            </td>
+                            <td className="px-4 py-3"><p className="font-medium text-slate-900">{row.title || '-'}</p></td>
                             <td className="px-4 py-3 text-xs text-slate-500">{row.end_date || '-'}</td>
                             <td className="px-4 py-3 text-sm text-slate-600">{row.assigned_to || '-'}</td>
                             <td className="px-4 py-3">
-                              <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${TASK_STATUS_STYLES[row.status]}`}>
+                              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${TASK_STATUS_COLORS[row.status]}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${TASK_STATUS_DOT[row.status]}`} />
                                 {TASK_STATUS_LABELS[row.status]}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs">
-                              {row.errors.length === 0 ? (
-                                <span className="font-medium text-green-700">Ready</span>
-                              ) : (
-                                <span className="text-red-700">{row.errors.join(' ')}</span>
-                              )}
+                              {row.errors.length === 0
+                                ? <span className="font-medium text-green-700">Ready</span>
+                                : <span className="text-red-700">{row.errors.join(' ')}</span>
+                              }
                             </td>
                           </tr>
                         ))}
@@ -1021,145 +997,11 @@ export default function ProjectProfilePage() {
               )}
             </div>
 
-            <div className="flex flex-col gap-3 border-t border-slate-200 p-6 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => setShowTaskUpload(false)}
-                className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
+            <div className="flex gap-3 border-t border-slate-200 p-6">
+              <button type="button" onClick={() => setShowTaskUpload(false)} className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button type="button" onClick={saveTaskUpload} disabled={savingTaskUpload || taskUploadValidCount === 0 || taskUploadInvalidCount > 0} className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                {savingTaskUpload ? 'Uploading…' : `Upload ${taskUploadValidCount} Task${taskUploadValidCount === 1 ? '' : 's'}`}
               </button>
-              <button
-                type="button"
-                onClick={saveTaskUpload}
-                disabled={savingTaskUpload || taskUploadValidCount === 0 || taskUploadInvalidCount > 0}
-                className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {savingTaskUpload ? 'Uploading...' : `Upload ${taskUploadValidCount} Task${taskUploadValidCount === 1 ? '' : 's'}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── TASK FORM MODAL ── */}
-      {showTaskForm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
-            <div className="flex items-center justify-between p-6 border-b border-slate-200">
-              <h2 className="text-lg font-semibold">{editingTask ? 'Edit Task' : 'Add Task'}</h2>
-              <button onClick={() => setShowTaskForm(false)}><X className="h-5 w-5 text-slate-400" /></button>
-            </div>
-            <form onSubmit={saveTask} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Title *</label>
-                <input
-                  required
-                  type="text"
-                  value={taskForm.title}
-                  onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))}
-                  placeholder="e.g. UI Design, Server Setup"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-                <textarea
-                  rows={2}
-                  value={taskForm.description}
-                  onChange={e => setTaskForm(f => ({ ...f, description: e.target.value }))}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Start Date</label>
-                  <input
-                    type="date"
-                    value={taskForm.start_date}
-                    onChange={e => setTaskForm(f => ({ ...f, start_date: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Due Date</label>
-                  <input
-                    type="date"
-                    value={taskForm.end_date}
-                    onChange={e => setTaskForm(f => ({ ...f, end_date: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Assigned To</label>
-                  <input
-                    type="text"
-                    value={taskForm.assigned_to}
-                    onChange={e => setTaskForm(f => ({ ...f, assigned_to: e.target.value }))}
-                    placeholder="Name or email"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-                  <select
-                    value={taskForm.status}
-                    onChange={e => setTaskForm(f => ({ ...f, status: e.target.value as TaskStatus }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {(Object.keys(TASK_STATUS_LABELS) as TaskStatus[]).map(s => (
-                      <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Estimated Hours</label>
-                  <input
-                    type="number"
-                    min="0" step="0.25"
-                    value={taskForm.estimated_hours}
-                    onChange={e => setTaskForm(f => ({ ...f, estimated_hours: e.target.value }))}
-                    placeholder="e.g. 4.5"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="flex items-center gap-3 pt-5">
-                  <input
-                    id="is_billable"
-                    type="checkbox"
-                    checked={taskForm.is_billable}
-                    onChange={e => setTaskForm(f => ({ ...f, is_billable: e.target.checked }))}
-                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <label htmlFor="is_billable" className="text-sm font-medium text-slate-700 cursor-pointer select-none">
-                    Billable task
-                  </label>
-                </div>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowTaskForm(false)} className="flex-1 border border-slate-200 text-slate-700 py-2 rounded-lg text-sm">Cancel</button>
-                <button type="submit" disabled={savingTask} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                  {savingTask ? 'Saving…' : editingTask ? 'Save Changes' : 'Add Task'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── DELETE CONFIRM MODAL ── */}
-      {confirmDeleteId && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
-            <h2 className="text-lg font-semibold text-slate-900 mb-2">Delete Task?</h2>
-            <p className="text-sm text-slate-500 mb-6">This action cannot be undone.</p>
-            <div className="flex gap-3">
-              <button onClick={() => setConfirmDeleteId(null)} className="flex-1 border border-slate-200 text-slate-700 py-2 rounded-lg text-sm">Cancel</button>
-              <button onClick={() => deleteTask(confirmDeleteId)} className="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-medium">Delete</button>
             </div>
           </div>
         </div>
@@ -1176,10 +1018,7 @@ export default function ProjectProfilePage() {
             <form onSubmit={addScheduleLine} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Stage Name *</label>
-                <input
-                  required
-                  type="text"
-                  placeholder="e.g. Deposit, Design Approval, Final Delivery"
+                <input required type="text" placeholder="e.g. Deposit, Design Approval, Final Delivery"
                   value={scheduleForm.schedule_name}
                   onChange={e => setScheduleForm(f => ({ ...f, schedule_name: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1187,9 +1026,7 @@ export default function ProjectProfilePage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-                <input
-                  type="text"
-                  value={scheduleForm.description}
+                <input type="text" value={scheduleForm.description}
                   onChange={e => setScheduleForm(f => ({ ...f, description: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -1197,18 +1034,14 @@ export default function ProjectProfilePage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Percentage (%)</label>
-                  <input
-                    type="number" min="0" max="100" step="0.01"
-                    value={scheduleForm.percentage}
+                  <input type="number" min="0" max="100" step="0.01" value={scheduleForm.percentage}
                     onChange={e => setScheduleForm(f => ({ ...f, percentage: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Fixed Amount</label>
-                  <input
-                    type="number" min="0" step="0.01"
-                    value={scheduleForm.fixed_amount}
+                  <input type="number" min="0" step="0.01" value={scheduleForm.fixed_amount}
                     onChange={e => setScheduleForm(f => ({ ...f, fixed_amount: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -1216,9 +1049,7 @@ export default function ProjectProfilePage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Due Date</label>
-                <input
-                  type="date"
-                  value={scheduleForm.due_date}
+                <input type="date" value={scheduleForm.due_date}
                   onChange={e => setScheduleForm(f => ({ ...f, due_date: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -1226,7 +1057,7 @@ export default function ProjectProfilePage() {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowScheduleForm(false)} className="flex-1 border border-slate-200 text-slate-700 py-2 rounded-lg text-sm">Cancel</button>
                 <button type="submit" disabled={savingSchedule} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                  {savingSchedule ? 'Saving...' : 'Add Line'}
+                  {savingSchedule ? 'Saving…' : 'Add Line'}
                 </button>
               </div>
             </form>
@@ -1245,25 +1076,17 @@ export default function ProjectProfilePage() {
               </div>
               <button onClick={() => setShowEditProject(false)}><X className="h-5 w-5 text-slate-400" /></button>
             </div>
-
             <form onSubmit={saveProject} className="p-6 space-y-4">
-              {/* Project Name */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Project Name *</label>
-                <input
-                  required
-                  type="text"
-                  value={editProjectForm.project_name}
+                <input required type="text" value={editProjectForm.project_name}
                   onChange={e => setEditProjectForm(f => ({ ...f, project_name: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-
-              {/* Status */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Status *</label>
-                <select
-                  value={editProjectForm.status}
+                <select value={editProjectForm.status}
                   onChange={e => setEditProjectForm(f => ({ ...f, status: e.target.value as Project['status'] }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -1272,86 +1095,52 @@ export default function ProjectProfilePage() {
                   <option value="completed">Completed</option>
                   <option value="cancelled">Cancelled</option>
                 </select>
-                {/* Status preview pill */}
                 <div className="mt-2">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${statusColor[editProjectForm.status] ?? 'bg-slate-100 text-slate-600'}`}>
                     {editProjectForm.status.replace('_', ' ')}
                   </span>
                 </div>
               </div>
-
-              {/* Project Manager */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Project Manager</label>
-                <input
-                  type="text"
-                  value={editProjectForm.project_manager}
+                <input type="text" value={editProjectForm.project_manager} placeholder="Full name"
                   onChange={e => setEditProjectForm(f => ({ ...f, project_manager: e.target.value }))}
-                  placeholder="Full name"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-
-              {/* Contract Amount */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Contract Amount</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={editProjectForm.total_contract_amount}
+                <input type="number" min="0" step="0.01" value={editProjectForm.total_contract_amount} placeholder="0"
                   onChange={e => setEditProjectForm(f => ({ ...f, total_contract_amount: e.target.value }))}
-                  placeholder="0"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-
-              {/* Dates */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Start Date</label>
-                  <input
-                    type="date"
-                    value={editProjectForm.start_date}
+                  <input type="date" value={editProjectForm.start_date}
                     onChange={e => setEditProjectForm(f => ({ ...f, start_date: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">End Date</label>
-                  <input
-                    type="date"
-                    value={editProjectForm.end_date}
+                  <input type="date" value={editProjectForm.end_date}
                     onChange={e => setEditProjectForm(f => ({ ...f, end_date: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
-
-              {/* Description */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-                <textarea
-                  rows={3}
-                  value={editProjectForm.description}
+                <textarea rows={3} value={editProjectForm.description}
                   onChange={e => setEditProjectForm(f => ({ ...f, description: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
-
               <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowEditProject(false)}
-                  className="flex-1 border border-slate-200 text-slate-700 py-2.5 rounded-lg text-sm font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingProject}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
-                >
+                <button type="button" onClick={() => setShowEditProject(false)} className="flex-1 border border-slate-200 text-slate-700 py-2.5 rounded-lg text-sm font-medium">Cancel</button>
+                <button type="submit" disabled={savingProject} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors">
                   {savingProject ? 'Saving…' : 'Save Changes'}
                 </button>
               </div>
