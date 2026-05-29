@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, Suspense, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
-import { Client, Project, Service } from '@/types';
+import { Client, InvoiceSchedule, Project, Service } from '@/types';
 import { formatCurrency, calculateLineTotal } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Plus, Trash2, ArrowLeft } from 'lucide-react';
@@ -20,6 +20,14 @@ type LineItem = {
   tax_percent: number;
 };
 
+type SchedulePrefill = InvoiceSchedule & {
+  project?: {
+    total_contract_amount: number | null;
+    client_id: string;
+    project_name: string;
+  } | null;
+};
+
 function genId() { return Math.random().toString(36).slice(2); }
 
 function NewInvoiceForm() {
@@ -27,17 +35,20 @@ function NewInvoiceForm() {
   const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const scheduleIdFromQuery = searchParams.get('schedule') || '';
+  const amountFromQuery = searchParams.get('amount');
 
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [saving, setSaving] = useState(false);
+  const [prefilledScheduleId, setPrefilledScheduleId] = useState('');
 
   const [header, setHeader] = useState({
     client_id: searchParams.get('client') || '',
     project_id: searchParams.get('project') || '',
-    schedule_id: searchParams.get('schedule') || '',
+    schedule_id: scheduleIdFromQuery,
     issue_date: new Date().toISOString().split('T')[0],
     due_date: '',
     currency: 'UGX',
@@ -51,7 +62,7 @@ function NewInvoiceForm() {
     item_name: '',
     description: '',
     quantity: 1,
-    unit_price: searchParams.get('amount') ? parseFloat(searchParams.get('amount')!) : 0,
+    unit_price: amountFromQuery ? parseFloat(amountFromQuery) : 0,
     discount_percent: 0,
     tax_percent: 0,
   }]);
@@ -119,6 +130,54 @@ function NewInvoiceForm() {
       .order('project_name')
       .then(({ data }) => setProjects(data || []));
   }, [activeCompanyId, header.client_id, supabase]);
+
+  useEffect(() => {
+    if (!activeCompanyId || !header.schedule_id || prefilledScheduleId === header.schedule_id) return;
+
+    async function loadSchedulePrefill() {
+      const { data } = await supabase
+        .from('invoice_schedules')
+        .select('*, project:projects(total_contract_amount, client_id, project_name)')
+        .eq('id', header.schedule_id)
+        .eq('company_id', activeCompanyId)
+        .maybeSingle();
+
+      const schedule = data as SchedulePrefill | null;
+      if (!schedule) {
+        setPrefilledScheduleId(header.schedule_id);
+        return;
+      }
+
+      const queryAmount = amountFromQuery ? Number(amountFromQuery) : NaN;
+      const computedAmount = Number.isFinite(queryAmount)
+        ? queryAmount
+        : schedule.fixed_amount != null
+          ? Number(schedule.fixed_amount)
+          : schedule.project?.total_contract_amount != null && schedule.percentage != null
+            ? Number(schedule.project.total_contract_amount) * Number(schedule.percentage) / 100
+            : 0;
+
+      setHeader(prev => ({
+        ...prev,
+        project_id: prev.project_id || schedule.project_id,
+        due_date: prev.due_date || schedule.due_date || '',
+      }));
+
+      setItems(prev => prev.map((item, idx) => {
+        if (idx !== 0) return item;
+        return {
+          ...item,
+          item_name: item.item_name || schedule.schedule_name,
+          description: item.description || schedule.description || '',
+          unit_price: item.unit_price || computedAmount,
+        };
+      }));
+
+      setPrefilledScheduleId(header.schedule_id);
+    }
+
+    void loadSchedulePrefill();
+  }, [activeCompanyId, amountFromQuery, header.schedule_id, prefilledScheduleId, supabase]);
 
   function addItem() {
     setItems(prev => [...prev, { id: genId(), service_id: '', item_name: '', description: '', quantity: 1, unit_price: 0, discount_percent: 0, tax_percent: 0 }]);

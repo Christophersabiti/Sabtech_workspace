@@ -12,6 +12,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import {
   ArrowLeft, Plus, X, Pencil, Trash2, Tag, Settings2,
   CheckCircle, XCircle, Download, Upload, FileSpreadsheet, AlertCircle,
+  Printer, Link2, ExternalLink,
 } from 'lucide-react';
 
 // ── New PM components ──────────────────────────────────────────────────────────
@@ -43,6 +44,24 @@ type TaskUploadRow = {
   assigned_to: string;
   status: TaskStatus;
   errors: string[];
+};
+
+type ScheduleFormState = {
+  schedule_name: string;
+  description: string;
+  percentage: string;
+  fixed_amount: string;
+  due_date: string;
+  invoice_id: string;
+};
+
+const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
+  schedule_name: '',
+  description: '',
+  percentage: '',
+  fixed_amount: '',
+  due_date: '',
+  invoice_id: '',
 };
 
 const TASK_TEMPLATE_HEADERS = ['Title', 'Description', 'Start Date', 'Due Date', 'Assigned To', 'Status'];
@@ -158,6 +177,25 @@ function sortTasksByStartDateDesc(list: EnhancedProjectTask[]) {
   });
 }
 
+function parseOptionalAmount(value: string): number | null {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function scheduleStatusFromInvoice(invoice: Invoice | null, fallback: InvoiceSchedule['status']): InvoiceSchedule['status'] {
+  if (!invoice) return fallback;
+  if (invoice.status === 'paid' || Number(invoice.balance_due || 0) <= 0) return 'paid';
+  if (invoice.status === 'cancelled' || invoice.status === 'void') return 'pending';
+  return 'invoiced';
+}
+
+const scheduleStatusClasses: Record<InvoiceSchedule['status'], string> = {
+  pending: 'bg-slate-100 text-slate-600',
+  invoiced: 'bg-blue-100 text-blue-700',
+  paid: 'bg-green-100 text-green-700',
+};
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const TASK_VIEW_KEY = 'sabtech_task_view';
@@ -207,8 +245,10 @@ export default function ProjectProfilePage() {
 
   // ── Schedule modal ─────────────────────────────────────────────────────────
   const [showScheduleForm, setShowScheduleForm] = useState(false);
-  const [scheduleForm, setScheduleForm] = useState({ schedule_name: '', description: '', percentage: '', fixed_amount: '', due_date: '' });
+  const [editingSchedule, setEditingSchedule] = useState<InvoiceSchedule | null>(null);
+  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [linkingScheduleId, setLinkingScheduleId] = useState<string | null>(null);
 
   // ── CSV Upload ─────────────────────────────────────────────────────────────
   const [showTaskUpload,    setShowTaskUpload]    = useState(false);
@@ -300,25 +340,168 @@ export default function ProjectProfilePage() {
   }
 
   // ── Schedule CRUD ──────────────────────────────────────────────────────────
-  async function addScheduleLine(e: React.FormEvent) {
+  function getScheduleAmount(schedule: InvoiceSchedule): number | null {
+    const fixedAmount = schedule.fixed_amount != null ? Number(schedule.fixed_amount) : null;
+    if (fixedAmount != null && Number.isFinite(fixedAmount)) return fixedAmount;
+
+    const percentage = schedule.percentage != null ? Number(schedule.percentage) : null;
+    const contractAmount = project?.total_contract_amount != null ? Number(project.total_contract_amount) : null;
+    if (percentage != null && contractAmount != null && Number.isFinite(percentage) && Number.isFinite(contractAmount)) {
+      return contractAmount * percentage / 100;
+    }
+
+    return null;
+  }
+
+  function getScheduleInvoice(schedule: InvoiceSchedule): Invoice | null {
+    return (
+      invoices.find(inv => inv.id === schedule.generated_invoice_id) ||
+      invoices.find(inv => inv.schedule_id === schedule.id) ||
+      null
+    );
+  }
+
+  function getScheduleStatus(schedule: InvoiceSchedule, invoice: Invoice | null): InvoiceSchedule['status'] {
+    return scheduleStatusFromInvoice(invoice, schedule.status);
+  }
+
+  function openAddSchedule() {
+    setEditingSchedule(null);
+    setScheduleForm(EMPTY_SCHEDULE_FORM);
+    setShowScheduleForm(true);
+  }
+
+  function openEditSchedule(schedule: InvoiceSchedule) {
+    const linkedInvoice = getScheduleInvoice(schedule);
+    setEditingSchedule(schedule);
+    setScheduleForm({
+      schedule_name: schedule.schedule_name,
+      description: schedule.description || '',
+      percentage: schedule.percentage != null ? String(schedule.percentage) : '',
+      fixed_amount: schedule.fixed_amount != null ? String(schedule.fixed_amount) : '',
+      due_date: schedule.due_date || '',
+      invoice_id: linkedInvoice?.id || '',
+    });
+    setShowScheduleForm(true);
+  }
+
+  function closeScheduleForm() {
+    setShowScheduleForm(false);
+    setEditingSchedule(null);
+    setScheduleForm(EMPTY_SCHEDULE_FORM);
+  }
+
+  async function saveScheduleLine(e: React.FormEvent) {
     e.preventDefault();
     if (!project) return;
+
+    const selectedInvoice = invoices.find(inv => inv.id === scheduleForm.invoice_id) || null;
+    const percentage = parseOptionalAmount(scheduleForm.percentage);
+    const fixedAmount = parseOptionalAmount(scheduleForm.fixed_amount);
+
     setSavingSchedule(true);
-    const { error } = await supabase.from('invoice_schedules').insert({
-      company_id: project.company_id, project_id: id,
-      schedule_name: scheduleForm.schedule_name,
-      description:   scheduleForm.description || null,
-      percentage:    scheduleForm.percentage  ? parseFloat(scheduleForm.percentage)  : null,
-      fixed_amount:  scheduleForm.fixed_amount? parseFloat(scheduleForm.fixed_amount): null,
-      due_date:      scheduleForm.due_date || null,
-      sort_order:    schedules.length,
-    });
-    if (!error) {
-      setShowScheduleForm(false);
-      setScheduleForm({ schedule_name: '', description: '', percentage: '', fixed_amount: '', due_date: '' });
-      load();
-    } else { alert('Error: ' + error.message); }
+
+    const schedulePayload = {
+      schedule_name: scheduleForm.schedule_name.trim(),
+      description: scheduleForm.description.trim() || null,
+      percentage,
+      fixed_amount: fixedAmount,
+      due_date: scheduleForm.due_date || null,
+      status: scheduleStatusFromInvoice(selectedInvoice, selectedInvoice ? 'invoiced' : 'pending'),
+      generated_invoice_id: selectedInvoice?.id ?? null,
+    };
+
+    let scheduleId = editingSchedule?.id;
+    let saveError: { message: string } | null = null;
+
+    if (editingSchedule) {
+      const { error } = await supabase
+        .from('invoice_schedules')
+        .update(schedulePayload)
+        .eq('id', editingSchedule.id)
+        .eq('company_id', project.company_id);
+      saveError = error;
+    } else {
+      const { data, error } = await supabase
+        .from('invoice_schedules')
+        .insert({
+          ...schedulePayload,
+          company_id: project.company_id,
+          project_id: id,
+          sort_order: schedules.length,
+        })
+        .select('id')
+        .single();
+      scheduleId = data?.id;
+      saveError = error;
+    }
+
+    if (!saveError && scheduleId) {
+      const previousInvoice = editingSchedule ? getScheduleInvoice(editingSchedule) : null;
+      const updatePromises = [];
+
+      if (selectedInvoice) {
+        updatePromises.push(
+          supabase
+            .from('invoices')
+            .update({ schedule_id: scheduleId, project_id: id })
+            .eq('id', selectedInvoice.id)
+            .eq('company_id', project.company_id),
+        );
+      }
+
+      if (previousInvoice && previousInvoice.id !== selectedInvoice?.id) {
+        updatePromises.push(
+          supabase
+            .from('invoices')
+            .update({ schedule_id: null })
+            .eq('id', previousInvoice.id)
+            .eq('schedule_id', scheduleId)
+            .eq('company_id', project.company_id),
+        );
+      }
+
+      const linkResults = await Promise.all(updatePromises);
+      saveError = linkResults.find(result => result.error)?.error ?? null;
+    }
+
+    if (!saveError) {
+      closeScheduleForm();
+      await load();
+    } else {
+      alert('Error: ' + saveError.message);
+    }
+
     setSavingSchedule(false);
+  }
+
+  async function linkScheduleToInvoice(schedule: InvoiceSchedule, invoice: Invoice) {
+    if (!project) return;
+    setLinkingScheduleId(schedule.id);
+
+    const scheduleStatus = scheduleStatusFromInvoice(invoice, 'invoiced');
+    const [scheduleResult, invoiceResult] = await Promise.all([
+      supabase
+        .from('invoice_schedules')
+        .update({ generated_invoice_id: invoice.id, status: scheduleStatus })
+        .eq('id', schedule.id)
+        .eq('company_id', project.company_id),
+      supabase
+        .from('invoices')
+        .update({ schedule_id: schedule.id, project_id: id })
+        .eq('id', invoice.id)
+        .eq('company_id', project.company_id),
+    ]);
+
+    const error = scheduleResult.error || invoiceResult.error;
+    if (error) alert('Error: ' + error.message);
+    else await load();
+
+    setLinkingScheduleId(null);
+  }
+
+  function openScheduleDocument(print = false) {
+    window.open(`/api/pdf/project/${id}/billing-schedule${print ? '?print=1' : ''}`, '_blank');
   }
 
   // ── Task CRUD (unified) ────────────────────────────────────────────────────
@@ -507,6 +690,12 @@ export default function ProjectProfilePage() {
 
   const taskUploadInvalidCount = taskUploadRows.filter(r => r.errors.length > 0).length;
   const taskUploadValidCount   = taskUploadRows.length - taskUploadInvalidCount;
+  const linkableInvoices = invoices.filter(inv =>
+    !inv.schedule_id ||
+    inv.schedule_id === editingSchedule?.id ||
+    inv.id === editingSchedule?.generated_invoice_id ||
+    inv.id === scheduleForm.invoice_id
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -836,8 +1025,11 @@ export default function ProjectProfilePage() {
       {/* ── SCHEDULE ── */}
       {tab === 'schedule' && (
         <div className="space-y-4">
-          <div className="flex justify-end">
-            <button onClick={() => setShowScheduleForm(true)} className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg">
+          <div className="flex flex-wrap justify-end gap-2">
+            <button onClick={() => openScheduleDocument(true)} className="inline-flex items-center gap-2 border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-sm px-4 py-2 rounded-lg">
+              <Printer className="h-4 w-4" /> Print Schedule
+            </button>
+            <button onClick={openAddSchedule} className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg">
               <Plus className="h-4 w-4" /> Add Schedule Line
             </button>
           </div>
@@ -848,42 +1040,72 @@ export default function ProjectProfilePage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    {['Stage','Description','%','Fixed Amount','Due Date','Status','Invoice',''].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">{h}</th>
-                    ))}
+                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Stage</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">Description</th>
+                    <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase w-20">%</th>
+                    <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase w-36">Fixed Amount</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase w-32">Due Date</th>
+                    <th className="text-center px-4 py-3 text-xs font-medium text-slate-500 uppercase w-32">Status</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase w-40">Invoice</th>
+                    <th className="text-right px-4 py-3 text-xs font-medium text-slate-500 uppercase w-44">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {schedules.map(s => {
-                    const computedAmount = s.fixed_amount || (project.total_contract_amount && s.percentage ? project.total_contract_amount * s.percentage / 100 : null);
+                    const computedAmount = getScheduleAmount(s);
+                    const linkedInvoice = getScheduleInvoice(s);
+                    const displayStatus = getScheduleStatus(s, linkedInvoice);
+                    const generateHref = `/invoices/new?project=${id}&client=${project.client_id}&schedule=${s.id}&amount=${computedAmount || ''}`;
+                    const needsLinkSync = !!linkedInvoice && linkedInvoice.id !== s.generated_invoice_id;
                     return (
                       <tr key={s.id} className="hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium text-slate-900">{s.schedule_name}</td>
                         <td className="px-4 py-3 text-slate-600">{s.description || '—'}</td>
-                        <td className="px-4 py-3 text-slate-600">{s.percentage ? `${s.percentage}%` : '—'}</td>
-                        <td className="px-4 py-3 text-slate-700">{computedAmount ? formatCurrency(computedAmount) : '—'}</td>
+                        <td className="px-4 py-3 text-right text-slate-600">{s.percentage != null ? `${s.percentage}%` : '—'}</td>
+                        <td className="px-4 py-3 text-right font-medium text-slate-700">{computedAmount != null ? formatCurrency(computedAmount, project.client?.currency) : '—'}</td>
                         <td className="px-4 py-3 text-slate-600">{formatDate(s.due_date)}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                            s.status === 'paid'     ? 'bg-green-100 text-green-700' :
-                            s.status === 'invoiced' ? 'bg-blue-100 text-blue-700' :
-                            'bg-slate-100 text-slate-600'
-                          }`}>{s.status}</span>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`inline-flex min-w-20 justify-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${scheduleStatusClasses[displayStatus]}`}>
+                            {displayStatus}
+                          </span>
                         </td>
                         <td className="px-4 py-3 font-mono text-xs">
-                          {s.generated_invoice_id
-                            ? <Link href={`/invoices/${s.generated_invoice_id}`} className="text-blue-600 hover:underline">View Invoice</Link>
-                            : '—'}
+                          {linkedInvoice ? (
+                            <Link href={`/invoices/${linkedInvoice.id}`} className="inline-flex items-center gap-1 text-blue-600 hover:underline">
+                              {linkedInvoice.invoice_number}
+                              <ExternalLink className="h-3 w-3" />
+                            </Link>
+                          ) : '—'}
                         </td>
                         <td className="px-4 py-3">
-                          {s.status === 'pending' && (
+                          <div className="flex items-center justify-end gap-2">
+                            {needsLinkSync && (
+                              <button
+                                type="button"
+                                onClick={() => linkedInvoice && linkScheduleToInvoice(s, linkedInvoice)}
+                                disabled={linkingScheduleId === s.id}
+                                className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                              >
+                                <Link2 className="h-3.5 w-3.5" /> Link
+                              </button>
+                            )}
+                            {!linkedInvoice && (
                             <Link
-                              href={`/invoices/new?project=${id}&client=${project.client_id}&schedule=${s.id}&amount=${computedAmount || ''}`}
+                              href={generateHref}
                               className="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded"
                             >
                               Generate Invoice
                             </Link>
-                          )}
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => openEditSchedule(s)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                              title="Edit schedule line"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1010,12 +1232,12 @@ export default function ProjectProfilePage() {
       {/* ── SCHEDULE FORM MODAL ── */}
       {showScheduleForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
             <div className="flex items-center justify-between p-6 border-b border-slate-200">
-              <h2 className="text-lg font-semibold">Add Schedule Line</h2>
-              <button onClick={() => setShowScheduleForm(false)}><X className="h-5 w-5 text-slate-400" /></button>
+              <h2 className="text-lg font-semibold">{editingSchedule ? 'Edit Schedule Line' : 'Add Schedule Line'}</h2>
+              <button onClick={closeScheduleForm}><X className="h-5 w-5 text-slate-400" /></button>
             </div>
-            <form onSubmit={addScheduleLine} className="p-6 space-y-4">
+            <form onSubmit={saveScheduleLine} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Stage Name *</label>
                 <input required type="text" placeholder="e.g. Deposit, Design Approval, Final Delivery"
@@ -1054,10 +1276,25 @@ export default function ProjectProfilePage() {
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Linked Invoice</label>
+                <select
+                  value={scheduleForm.invoice_id}
+                  onChange={e => setScheduleForm(f => ({ ...f, invoice_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">No invoice linked</option>
+                  {linkableInvoices.map(inv => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.invoice_number} - {formatCurrency(inv.total_amount, inv.currency)} - {inv.status.replace('_', ' ')}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowScheduleForm(false)} className="flex-1 border border-slate-200 text-slate-700 py-2 rounded-lg text-sm">Cancel</button>
+                <button type="button" onClick={closeScheduleForm} className="flex-1 border border-slate-200 text-slate-700 py-2 rounded-lg text-sm">Cancel</button>
                 <button type="submit" disabled={savingSchedule} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                  {savingSchedule ? 'Saving…' : 'Add Line'}
+                  {savingSchedule ? 'Saving...' : editingSchedule ? 'Save Line' : 'Add Line'}
                 </button>
               </div>
             </form>
