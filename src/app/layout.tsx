@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { Analytics } from '@vercel/analytics/next';
 
 export const metadata: Metadata = {
   title: 'Sabtech Online Invoicing',
@@ -37,6 +38,7 @@ export default function RootLayout({
       <body>
         <OfflineBanner />
         {children}
+        <Analytics />
       </body>
     </html>
   );
