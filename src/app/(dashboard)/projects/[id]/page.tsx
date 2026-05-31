@@ -12,7 +12,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import {
   ArrowLeft, Plus, X, Pencil, Trash2, Tag, Settings2,
   CheckCircle, XCircle, Download, Upload, FileSpreadsheet, AlertCircle,
-  Printer, Link2, ExternalLink,
+  Printer, Link2, ExternalLink, Clock, TrendingUp, TrendingDown,
 } from 'lucide-react';
 
 // ── New PM components ──────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ import type { TaskFilters }                          from '@/components/projects
 import { ProjectKanbanView }                         from '@/components/projects/ProjectKanbanView';
 import { ProjectGanttView }                          from '@/components/projects/ProjectGanttView';
 import { ProjectTaskDrawer }                         from '@/components/projects/ProjectTaskDrawer';
+import { TimeLogDrawer }                             from '@/components/projects/TimeLogDrawer';
 import type { TaskFormValues }                       from '@/components/projects/ProjectTaskDrawer';
 import type { EnhancedProjectTask, TaskViewMode, TaskStatus } from '@/components/projects/types';
 import {
@@ -211,8 +212,13 @@ export default function ProjectProfilePage() {
   const [invoices,  setInvoices]  = useState<Invoice[]>([]);
   const [schedules, setSchedules] = useState<InvoiceSchedule[]>([]);
   const [tasks,     setTasks]     = useState<EnhancedProjectTask[]>([]);
-  const [tab,       setTab]       = useState<Tab>('overview');
   const [loading,   setLoading]   = useState(true);
+
+  // ── Timesheets + Expenses P&L state ─────────────────────────────────────────
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [timeLogs, setTimeLogs] = useState<any[]>([]);
+  const [timeLogDrawerOpen, setTimeLogDrawerOpen] = useState(false);
+  const [timeLogDrawerTask, setTimeLogDrawerTask] = useState<EnhancedProjectTask | null>(null);
 
   // ── View mode ──────────────────────────────────────────────────────────────
   const [taskView, setTaskView] = useState<TaskViewMode>(() => {
@@ -270,16 +276,38 @@ export default function ProjectProfilePage() {
       return;
     }
     setLoading(true);
-    const [{ data: proj }, { data: inv }, { data: sched }, { data: tsk }] = await Promise.all([
+    const [
+      { data: proj },
+      { data: inv },
+      { data: sched },
+      { data: tsk },
+      { data: exp }
+    ] = await Promise.all([
       supabase.from('projects').select('*, client:clients(*)').eq('id', id).eq('company_id', activeCompanyId).single(),
       supabase.from('invoices').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('issue_date', { ascending: false }),
       supabase.from('invoice_schedules').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('sort_order'),
       supabase.from('project_tasks').select('*').eq('project_id', id).eq('company_id', activeCompanyId)
         .order('sort_order').order('start_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
+      supabase.from('expenses').select('*, category:expense_categories(name)').eq('project_id', id).eq('company_id', activeCompanyId),
     ]);
     setProject(proj as Project & { client: Client });
     setInvoices(inv || []);
     setSchedules(sched || []);
+    setExpenses(exp || []);
+
+    // Load time logs for project tasks
+    const taskIds = (tsk || []).map((t: any) => t.id);
+    if (taskIds.length > 0) {
+      const { data: logs } = await supabase
+        .from('task_time_logs')
+        .select('*')
+        .in('task_id', taskIds)
+        .eq('company_id', activeCompanyId);
+      setTimeLogs(logs || []);
+    } else {
+      setTimeLogs([]);
+    }
+
     // Normalise tasks — ensure new fields have defaults for rows created before migration
     setTasks(sortTasksByStartDateDesc((tsk || []).map((t: Record<string, unknown>) => ({
       ...t,
@@ -770,25 +798,104 @@ export default function ProjectProfilePage() {
       </div>
 
       {/* ── OVERVIEW ── */}
-      {tab === 'overview' && (
-        <div className="bg-white border border-slate-200 rounded-xl p-6 grid grid-cols-2 gap-6">
-          {[
-            { label: 'Project Code',    value: project.project_code },
-            { label: 'Client',          value: project.client?.name },
-            { label: 'Billing Type',    value: BILLING_TYPE_LABELS[project.billing_type] },
-            { label: 'Status',          value: <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${statusColor[project.status]}`}>{project.status.replace('_', ' ')}</span> },
-            { label: 'Project Manager', value: project.project_manager },
-            { label: 'Start Date',      value: formatDate(project.start_date) },
-            { label: 'End Date',        value: formatDate(project.end_date) },
-            { label: 'Description',     value: project.description },
-          ].map(({ label, value }) => (
-            <div key={label}>
-              <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">{label}</p>
-              <p className="mt-1 text-sm text-slate-800">{value || '—'}</p>
+      {tab === 'overview' && (() => {
+        const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+        const totalLoggedHours = timeLogs.reduce((s, l) => s + (Number(l.hours_logged) || 0), 0);
+        const standardLaborRate = project.client?.currency === 'USD' ? 50 : 50000;
+        const totalLaborCost = totalLoggedHours * standardLaborRate;
+        const totalProjectCost = totalExpenses + totalLaborCost;
+        const netMargin = totalBilled - totalProjectCost;
+        const marginPercent = totalBilled > 0 ? (netMargin / totalBilled) * 100 : 0;
+
+        let marginBg = 'bg-red-50 border-red-200 text-red-700';
+        let MarginIcon = TrendingDown;
+        if (marginPercent > 30) {
+          marginBg = 'bg-green-50 border-green-200 text-green-700';
+          MarginIcon = TrendingUp;
+        } else if (marginPercent >= 5) {
+          marginBg = 'bg-amber-50 border-amber-200 text-amber-700';
+          MarginIcon = TrendingUp;
+        }
+
+        return (
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Identity details */}
+            <div className="bg-white border border-slate-200 rounded-xl p-6 grid grid-cols-2 gap-6">
+              {[
+                { label: 'Project Code',    value: project.project_code },
+                { label: 'Client',          value: project.client?.name },
+                { label: 'Billing Type',    value: BILLING_TYPE_LABELS[project.billing_type] },
+                { label: 'Status',          value: <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${statusColor[project.status]}`}>{project.status.replace('_', ' ')}</span> },
+                { label: 'Project Manager', value: project.project_manager },
+                { label: 'Start Date',      value: formatDate(project.start_date) },
+                { label: 'End Date',        value: formatDate(project.end_date) },
+                { label: 'Description',     value: project.description },
+              ].map(({ label, value }) => (
+                <div key={label} className={label === 'Description' ? 'col-span-2' : ''}>
+                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">{label}</p>
+                  <p className="mt-1 text-sm text-slate-800 leading-relaxed">{value || '—'}</p>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+
+            {/* P&L Dashboard box */}
+            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 border border-slate-700/40 rounded-2xl p-6 text-white shadow-xl flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4" /> Project Profitability (P&L)
+                  </h3>
+                  <span className="text-[10px] bg-white/10 text-slate-300 font-semibold px-2 py-0.5 rounded-full">
+                    Base: {project.client?.currency || 'UGX'}
+                  </span>
+                </div>
+
+                <div className="space-y-3.5">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-400">Total Billed Revenue</span>
+                    <span className="font-bold">{formatCurrency(totalBilled, project.client?.currency)}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-400">Project Expenses</span>
+                    <span className="font-bold text-red-400">-{formatCurrency(totalExpenses, project.client?.currency)}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-sm">
+                    <div className="flex flex-col">
+                      <span className="text-slate-400">Labor Hours ({totalLoggedHours.toFixed(1)} hrs)</span>
+                      <span className="text-[10px] text-slate-500 font-medium">Est. @ {formatCurrency(standardLaborRate, project.client?.currency)}/hr</span>
+                    </div>
+                    <span className="font-bold text-red-400">-{formatCurrency(totalLaborCost, project.client?.currency)}</span>
+                  </div>
+
+                  <div className="border-t border-white/5 pt-3 flex justify-between items-center text-sm font-bold">
+                    <span className="text-slate-300">Total Cost Burden</span>
+                    <span className="text-red-400">{formatCurrency(totalProjectCost, project.client?.currency)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Dynamic Health margin indicator */}
+              <div className={`mt-6 border rounded-xl p-4 flex items-center justify-between ${marginBg}`}>
+                <div className="space-y-0.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider opacity-85">Net Profit Margin</p>
+                  <p className="text-2xl font-black tabular-nums">{formatCurrency(netMargin, project.client?.currency)}</p>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <div className="flex items-center gap-1 text-base font-black">
+                    <MarginIcon className="w-5 h-5 shrink-0" />
+                    <span>{marginPercent.toFixed(1)}%</span>
+                  </div>
+                  <span className="text-[9px] font-extrabold uppercase tracking-wide opacity-80">
+                    {marginPercent > 30 ? 'Highly Profitable' : marginPercent >= 5 ? 'Healthy Margin' : 'Burden Exceeded'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── TASKS ── */}
       {tab === 'tasks' && (
@@ -910,6 +1017,9 @@ export default function ProjectProfilePage() {
                               </td>
                               <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={() => { setTimeLogDrawerTask(task); setTimeLogDrawerOpen(true); }} className="p-1.5 rounded text-slate-400 hover:text-purple-600 hover:bg-purple-50" title="Timesheets / Log hours">
+                                    <Clock className="h-3.5 w-3.5" />
+                                  </button>
                                   <button onClick={() => openEditTask(task)} className="p-1.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50">
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
@@ -1385,6 +1495,13 @@ export default function ProjectProfilePage() {
           </div>
         </div>
       )}
+
+      <TimeLogDrawer
+        task={timeLogDrawerTask}
+        open={timeLogDrawerOpen}
+        onClose={() => setTimeLogDrawerOpen(false)}
+        onLoggedChange={load}
+      />
     </div>
   );
 }

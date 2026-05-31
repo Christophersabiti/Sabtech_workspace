@@ -83,7 +83,7 @@ function LoginForm() {
             <Image src="/logo.svg" alt="Sabtech Online" width={64} height={64} />
           </div>
           <h1 className="text-2xl font-black text-white">Sabtech Online</h1>
-          <p className="text-slate-400 text-sm mt-1">Sign in to the invoicing system</p>
+          <p className="text-slate-400 text-sm mt-1">Sign in to Sabtech Workspace</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">

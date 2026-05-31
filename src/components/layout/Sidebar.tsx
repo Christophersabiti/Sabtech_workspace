@@ -24,6 +24,9 @@ import {
   ClipboardList,
   ReceiptText,
   ShieldCheck,
+  ChevronsUpDown,
+  Plus,
+  Check,
 } from 'lucide-react';
 import { useState, useEffect, useMemo, ElementType } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -198,7 +201,7 @@ function useCompanyBranding() {
   return branding;
 }
 
-function SidebarBrand({
+function WorkspaceSwitcher({
   collapsed,
   companyName,
   logoUrl,
@@ -207,35 +210,143 @@ function SidebarBrand({
   companyName: string;
   logoUrl: string | null;
 }) {
+  const { activeCompanyId, memberships, setActiveCompanyId } = useActiveCompany();
+  const [isOpen, setIsOpen] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
+  const router = useRouter();
+
   const showLogo = !!logoUrl && !logoFailed;
+  const currentInitial = companyName.charAt(0).toUpperCase();
+
+  // close dropdown on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleClose() {
+      setIsOpen(false);
+    }
+    document.addEventListener('click', handleClose);
+    return () => document.removeEventListener('click', handleClose);
+  }, [isOpen]);
+
+  const handleWorkspaceChange = (companyId: string) => {
+    setActiveCompanyId(companyId);
+    router.refresh();
+  };
 
   return (
-    <div className="flex items-center gap-3 px-4 py-5 border-b border-slate-800">
-      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10">
-        {showLogo ? (
-          <Image
-            src={logoUrl as string}
-            alt={`${companyName} logo`}
-            width={56}
-            height={56}
-            className="h-12 w-12 object-contain"
-            unoptimized
-            onError={() => setLogoFailed(true)}
-          />
-        ) : (
-          <div className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-fuchsia-500 text-fuchsia-500 font-bold text-lg">
-            SAB
+    <div className="relative border-b border-slate-800">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
+        className="w-full flex items-center justify-between gap-3 px-4 py-5 hover:bg-slate-900/40 text-left transition-colors group outline-none cursor-pointer"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-900 ring-1 ring-white/10 group-hover:ring-white/20 transition-all">
+            {showLogo ? (
+              <Image
+                src={logoUrl as string}
+                alt={`${companyName} logo`}
+                width={48}
+                height={48}
+                className="h-10 w-10 object-contain"
+                unoptimized
+                onError={() => setLogoFailed(true)}
+              />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-indigo-500 text-white font-extrabold text-base">
+                {currentInitial}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {!collapsed && (
-        <div className="min-w-0">
-          <h1 className="truncate text-white text-2xl font-bold leading-tight">
-            {companyName}
-          </h1>
-          <p className="truncate text-slate-400 text-sm">Invoicing System</p>
+          {!collapsed && (
+            <div className="min-w-0">
+              <h1 className="truncate text-white text-base font-bold leading-tight flex items-center gap-1 group-hover:text-purple-300 transition-colors">
+                {companyName}
+              </h1>
+              <p className="truncate text-slate-500 text-[11px] font-semibold uppercase tracking-wider">Sabtech Workspace</p>
+            </div>
+          )}
+        </div>
+
+        {!collapsed && (
+          <ChevronsUpDown className="h-4 w-4 text-slate-500 group-hover:text-slate-300 shrink-0 transition-colors" />
+        )}
+      </button>
+
+      {/* Glassmorphic Dropdown Popover */}
+      {isOpen && (
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          className="absolute left-4 top-20 w-72 bg-slate-950/95 backdrop-blur-xl border border-slate-800/80 rounded-2xl shadow-2xl z-50 p-2 space-y-1.5 focus:outline-none animate-in fade-in slide-in-from-top-2 duration-150"
+        >
+          <div className="px-3 pt-2 pb-1 text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-500">
+            Workspaces
+          </div>
+
+          <div className="max-h-60 overflow-y-auto space-y-1">
+            {memberships.map((m) => {
+              const name = m.company?.name || 'Sabtech Online';
+              const initial = name.charAt(0).toUpperCase();
+              const isActive = m.company_id === activeCompanyId;
+              
+              // Generate deterministic gradient based on name character codes
+              const colorKeys = [
+                'from-pink-500 to-rose-500',
+                'from-purple-500 to-indigo-500',
+                'from-blue-500 to-cyan-500',
+                'from-emerald-500 to-teal-500',
+                'from-amber-500 to-orange-500'
+              ];
+              const nameSum = name.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+              const colorClass = colorKeys[nameSum % colorKeys.length];
+
+              return (
+                <button
+                  key={m.company_id}
+                  type="button"
+                  onClick={() => handleWorkspaceChange(m.company_id)}
+                  className={`w-full flex items-center justify-between gap-3 p-2 rounded-xl transition-all text-left outline-none cursor-pointer ${
+                    isActive 
+                      ? 'bg-purple-600/10 text-white border border-purple-500/25' 
+                      : 'hover:bg-slate-900/60 text-slate-300 hover:text-white border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${colorClass} text-white font-black text-sm`}>
+                      {initial}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-bold leading-tight">{name}</p>
+                      <p className="truncate text-[10px] text-slate-500 font-medium">/{m.company?.slug || 'workspace'}</p>
+                    </div>
+                  </div>
+                  {isActive && (
+                    <Check className="h-4 w-4 text-purple-400 shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-slate-800/80 pt-1.5 mt-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                router.push('/onboarding/company');
+              }}
+              className="w-full flex items-center gap-3 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900/60 text-left text-xs font-semibold outline-none transition-all cursor-pointer"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-950 text-slate-400">
+                <Plus className="h-4 w-4" />
+              </div>
+              <span>Create Workspace</span>
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -384,7 +495,7 @@ export function SidebarNavContent({
 
   return (
     <div className="flex h-full flex-col bg-[#071433]">
-      <SidebarBrand
+      <WorkspaceSwitcher
         collapsed={collapsed}
         companyName={branding.company_name || 'Sabtech Online'}
         logoUrl={branding.logo_url}

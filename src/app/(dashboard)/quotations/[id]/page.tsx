@@ -315,36 +315,56 @@ export default function QuotationDetailPage() {
 
       {/* Convert to Tasks */}
       {canConvert && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-5 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-              <Zap className="h-5 w-5 text-green-600" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-sm font-semibold text-green-900 mb-1">Convert to Project Tasks</h2>
-              <p className="text-xs text-green-700 mb-4">Each line item will become a task. Select the project to attach the tasks to.</p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <select
-                  value={selectedProject}
-                  onChange={e => setSelectedProject(e.target.value)}
-                  className="flex-1 border border-green-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                >
-                  <option value="">— Select a project —</option>
-                  {projects.map(p => (
-                    <option key={p.id} value={p.id}>{p.project_name} ({p.project_code})</option>
-                  ))}
-                </select>
-                <button
-                  onClick={handleConvert}
-                  disabled={converting || !selectedProject}
-                  className="inline-flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors"
-                >
-                  {converting
-                    ? <><span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full" /> Converting…</>
-                    : <><Zap className="h-4 w-4" /> Convert to Tasks</>}
-                </button>
+        <div className="space-y-4">
+          <div className="bg-green-50 border border-green-200 rounded-xl p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Zap className="h-5 w-5 text-green-600" />
               </div>
-              <p className="text-xs text-green-600 mt-3">{items.length} item{items.length !== 1 ? 's' : ''} will be created as tasks.</p>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-sm font-semibold text-green-900 mb-1">Convert to Project Tasks</h2>
+                <p className="text-xs text-green-700 mb-4">Each line item will become a task. Select the project to attach the tasks to.</p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <select
+                    value={selectedProject}
+                    onChange={e => setSelectedProject(e.target.value)}
+                    className="flex-1 border border-green-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  >
+                    <option value="">— Select a project —</option>
+                    {projects.map(p => (
+                      <option key={p.id} value={p.id}>{p.project_name} ({p.project_code})</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleConvert}
+                    disabled={converting || !selectedProject}
+                    className="inline-flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors"
+                  >
+                    {converting
+                      ? <><span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full" /> Converting…</>
+                      : <><Zap className="h-4 w-4" /> Convert to Tasks</>}
+                  </button>
+                </div>
+                <p className="text-xs text-green-600 mt-3">{items.length} item{items.length !== 1 ? 's' : ''} will be created as tasks.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                <FileText className="h-5 w-5 text-blue-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-sm font-semibold text-blue-900 mb-1">Convert to Invoice</h2>
+                <p className="text-xs text-blue-700 mb-4">Generate a fresh client invoice directly pre-filled with this quotation's details and line items. You'll be able to review and adjust it before saving.</p>
+                <Link
+                  href={`/invoices/new?client=${quotation.client_id}&quotation=${quotation.id}`}
+                  className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors"
+                >
+                  <FileText className="h-4 w-4" /> Convert to Invoice
+                </Link>
+              </div>
             </div>
           </div>
         </div>
@@ -353,7 +373,7 @@ export default function QuotationDetailPage() {
       {quotation.status === 'converted' && (
         <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 text-sm text-purple-700 flex items-center gap-2">
           <CheckCircle className="h-4 w-4 flex-shrink-0" />
-          This quotation has been converted to tasks and linked to a project.
+          This quotation has been successfully converted.
         </div>
       )}
     </div>

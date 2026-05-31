@@ -3,13 +3,13 @@ import './globals.css';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
 
 export const metadata: Metadata = {
-  title: 'Sabtech Online Invoicing',
-  description: 'Invoicing & project management for Sabtech Online',
+  title: 'Sabtech Workspace',
+  description: 'Unified workspace for consultants and project managers, managed under Sabtech Online',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'Sabtech Invoicing',
+    title: 'Sabtech Workspace',
   },
   icons: {
     icon: [

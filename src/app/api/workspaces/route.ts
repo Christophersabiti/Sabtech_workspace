@@ -16,8 +16,12 @@ async function createUniqueCompany(
   adminSupabase: SupabaseClient,
   name: string,
   ownerUserId: string,
+  customSlug?: string,
+  plan?: string,
+  primaryContactName?: string,
+  primaryContactEmail?: string,
 ) {
-  const baseSlug = slugify(name) || `workspace-${Date.now()}`;
+  const baseSlug = slugify(customSlug || name) || `workspace-${Date.now()}`;
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const slug = attempt === 0 ? baseSlug : `${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -29,6 +33,9 @@ async function createUniqueCompany(
         slug,
         owner_user_id: ownerUserId,
         status: 'active',
+        plan: plan || 'starter',
+        primary_contact_name: primaryContactName || null,
+        primary_contact_email: primaryContactEmail || null,
       })
       .select('id, name, slug, status')
       .single();
@@ -72,6 +79,10 @@ export async function POST(req: NextRequest) {
     currency?: string;
     phone?: string;
     website?: string;
+    slug?: string;
+    plan?: string;
+    primaryContactName?: string;
+    primaryContactEmail?: string;
   } | null;
 
   const companyName = body?.companyName?.trim();
@@ -113,7 +124,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const company = await createUniqueCompany(adminSupabase, companyName, appUser.id);
+    const company = await createUniqueCompany(
+      adminSupabase,
+      companyName,
+      appUser.id,
+      body?.slug,
+      body?.plan,
+      body?.primaryContactName,
+      body?.primaryContactEmail,
+    );
 
     const { error: membershipError } = await adminSupabase
       .from('company_users')
@@ -139,6 +158,7 @@ export async function POST(req: NextRequest) {
         currency: body?.currency || 'UGX',
         phone: body?.phone?.trim() || null,
         website: body?.website?.trim() || null,
+        email: body?.primaryContactEmail || null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'company_id' });
 
@@ -154,6 +174,9 @@ export async function POST(req: NextRequest) {
           name: company.name,
           slug: company.slug,
           owner_user_id: appUser.id,
+          plan: body?.plan || 'starter',
+          primary_contact_name: body?.primaryContactName || null,
+          primary_contact_email: body?.primaryContactEmail || null,
         },
       });
 

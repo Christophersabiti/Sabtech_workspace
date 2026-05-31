@@ -1,7 +1,7 @@
 {
-  "name": "Sabtech Invoicing",
-  "short_name": "Sabtech",
-  "description": "Invoicing & project management for Sabtech Online",
+  "name": "Sabtech Workspace",
+  "short_name": "Sabtech Workspace",
+  "description": "Unified workspace for consultants and project managers, managed under Sabtech Online",
   "theme_color": "#8b35c1",
   "background_color": "#ffffff",
   "display": "standalone",

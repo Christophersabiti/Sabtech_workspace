@@ -36,6 +36,7 @@ function NewInvoiceForm() {
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const scheduleIdFromQuery = searchParams.get('schedule') || '';
+  const quotationIdFromQuery = searchParams.get('quotation') || '';
   const amountFromQuery = searchParams.get('amount');
 
   const [clients, setClients] = useState<Client[]>([]);
@@ -44,6 +45,7 @@ function NewInvoiceForm() {
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [saving, setSaving] = useState(false);
   const [prefilledScheduleId, setPrefilledScheduleId] = useState('');
+  const [prefilledQuotationId, setPrefilledQuotationId] = useState('');
 
   const [header, setHeader] = useState({
     client_id: searchParams.get('client') || '',
@@ -179,6 +181,61 @@ function NewInvoiceForm() {
     void loadSchedulePrefill();
   }, [activeCompanyId, amountFromQuery, header.schedule_id, prefilledScheduleId, supabase]);
 
+  useEffect(() => {
+    if (!activeCompanyId || !quotationIdFromQuery || prefilledQuotationId === quotationIdFromQuery) return;
+
+    async function loadQuotationPrefill() {
+      const { data, error } = await supabase
+        .from('quotations')
+        .select('*, quotation_items(*)')
+        .eq('id', quotationIdFromQuery)
+        .eq('company_id', activeCompanyId)
+        .maybeSingle();
+
+      if (error || !data) {
+        console.error('Error prefilling from quotation:', error);
+        setPrefilledQuotationId(quotationIdFromQuery);
+        return;
+      }
+
+      const quot = data;
+      // Calculate tax percent if there's any tax
+      let taxPercent = 0;
+      if (quot.tax > 0 && quot.subtotal > 0) {
+        taxPercent = Math.round((quot.tax / quot.subtotal) * 100 * 100) / 100;
+      }
+
+      setHeader(prev => ({
+        ...prev,
+        client_id: quot.client_id || prev.client_id,
+        currency: quot.currency || prev.currency,
+        notes: quot.notes || prev.notes,
+      }));
+
+      if (quot.discount > 0) {
+        setDiscountAmount(quot.discount);
+      }
+
+      if (quot.quotation_items && quot.quotation_items.length > 0) {
+        const mappedItems: LineItem[] = quot.quotation_items.map((item: any) => ({
+          id: genId(),
+          service_id: '',
+          item_name: item.item_name,
+          description: item.description || '',
+          quantity: Number(item.quantity) || 1,
+          unit_price: Number(item.unit_price) || 0,
+          discount_percent: 0,
+          tax_percent: taxPercent,
+        }));
+        setItems(mappedItems);
+      }
+
+      setPrefilledQuotationId(quotationIdFromQuery);
+    }
+
+    void loadQuotationPrefill();
+  }, [activeCompanyId, quotationIdFromQuery, prefilledQuotationId, supabase]);
+
   function addItem() {
     setItems(prev => [...prev, { id: genId(), service_id: '', item_name: '', description: '', quantity: 1, unit_price: 0, discount_percent: 0, tax_percent: 0 }]);
   }
@@ -293,6 +350,15 @@ function NewInvoiceForm() {
         .from('invoice_schedules')
         .update({ status: 'invoiced', generated_invoice_id: inv.id })
         .eq('id', header.schedule_id)
+        .eq('company_id', activeCompanyId);
+    }
+
+    // Update quotation status if linked
+    if (quotationIdFromQuery) {
+      await supabase
+        .from('quotations')
+        .update({ status: 'converted' })
+        .eq('id', quotationIdFromQuery)
         .eq('company_id', activeCompanyId);
     }
 
