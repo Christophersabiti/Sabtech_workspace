@@ -263,6 +263,9 @@ export default function ProjectProfilePage() {
   const [taskUploadError,   setTaskUploadError]   = useState<string | null>(null);
   const [savingTaskUpload,  setSavingTaskUpload]  = useState(false);
 
+  // ── Active tab ─────────────────────────────────────────────────────────────
+  const [tab, setTab] = useState<Tab>('overview');
+
   // ── Confirm delete ─────────────────────────────────────────────────────────
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
