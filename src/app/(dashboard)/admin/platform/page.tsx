@@ -19,9 +19,13 @@ import {
   ShieldCheck,
   Users,
   X,
+  Key,
+  Trash2,
+  Settings,
 } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { usePlatformImpersonation } from '@/hooks/usePlatformImpersonation';
+import { createClient } from '@/lib/supabase/client';
 
 type PlatformCompany = {
   id: string;
@@ -82,6 +86,163 @@ export default function PlatformAdminPage() {
     adminFullName: '',
     adminEmail: '',
   });
+
+  // Pesapal Configuration states
+  const [pesapalKey, setPesapalKey] = useState('');
+  const [pesapalSecret, setPesapalSecret] = useState('');
+  const [pesapalIpn, setPesapalIpn] = useState('');
+  const [pesapalSandbox, setPesapalSandbox] = useState(true);
+  const [loadingConfig, setLoadingConfig] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+
+  // Subscription Plans states
+  const [plans, setPlans] = useState<any[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [createPlanOpen, setCreatePlanOpen] = useState(false);
+  const [creatingPlan, setCreatingPlan] = useState(false);
+  const [planForm, setPlanForm] = useState({
+    key: '',
+    name: '',
+    description: '',
+    price: 0,
+    currency: 'UGX',
+    billingInterval: 'monthly',
+    userLimit: 3,
+    invoiceLimit: 50,
+  });
+
+  const loadPesapalConfig = useCallback(async () => {
+    setLoadingConfig(true);
+    try {
+      const res = await fetch('/api/platform/pesapal-config');
+      const data = await res.json();
+      if (res.ok && data.settings) {
+        setPesapalKey(data.settings.consumer_key || '');
+        setPesapalSecret(data.settings.consumer_secret || '');
+        setPesapalIpn(data.settings.ipn_id || '');
+        setPesapalSandbox(data.settings.sandbox_mode ?? true);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingConfig(false);
+    }
+  }, []);
+
+  const loadPlans = useCallback(async () => {
+    setLoadingPlans(true);
+    const client = createClient();
+    const { data, error } = await client
+      .from('subscription_plans')
+      .select('*')
+      .order('price', { ascending: true });
+
+    if (!error && data) {
+      setPlans(data);
+    }
+    setLoadingPlans(false);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'billing') {
+      void loadPesapalConfig();
+      void loadPlans();
+    }
+  }, [activeTab, loadPesapalConfig, loadPlans]);
+
+  async function savePesapalConfig(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingConfig(true);
+    try {
+      const res = await fetch('/api/platform/pesapal-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          consumerKey: pesapalKey,
+          consumerSecret: pesapalSecret,
+          ipnId: pesapalIpn,
+          sandboxMode: pesapalSandbox,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setToast({ type: 'success', message: 'Pesapal configuration saved!' });
+        void loadPesapalConfig();
+      } else {
+        setToast({ type: 'error', message: data.error || 'Failed to save config.' });
+      }
+    } catch (err) {
+      setToast({ type: 'error', message: 'Network error saving config.' });
+    } finally {
+      setSavingConfig(false);
+    }
+  }
+
+  async function handleCreatePlan(e: React.FormEvent) {
+    e.preventDefault();
+    if (!planForm.key || !planForm.name) return;
+    setCreatingPlan(true);
+    const client = createClient();
+    const { error } = await client
+      .from('subscription_plans')
+      .insert({
+        key: planForm.key.toLowerCase().trim(),
+        name: planForm.name.trim(),
+        description: planForm.description.trim(),
+        price: Number(planForm.price),
+        currency: planForm.currency,
+        billing_interval: planForm.billingInterval,
+        user_limit: Number(planForm.userLimit),
+        invoice_limit: Number(planForm.invoiceLimit),
+        is_active: true,
+      });
+
+    if (error) {
+      setToast({ type: 'error', message: error.message });
+    } else {
+      setToast({ type: 'success', message: 'Plan created successfully!' });
+      setCreatePlanOpen(false);
+      setPlanForm({
+        key: '',
+        name: '',
+        description: '',
+        price: 0,
+        currency: 'UGX',
+        billingInterval: 'monthly',
+        userLimit: 3,
+        invoiceLimit: 50,
+      });
+      void loadPlans();
+    }
+    setCreatingPlan(false);
+  }
+
+  async function handleDeletePlan(planId: string) {
+    if (!confirm('Are you sure you want to deactivate/delete this plan?')) return;
+    const client = createClient();
+    const { error } = await client
+      .from('subscription_plans')
+      .delete()
+      .eq('id', planId);
+
+    if (error) {
+      // If plan is in use, soft deactivate it instead of hard deleting
+      const { error: softErr } = await client
+        .from('subscription_plans')
+        .update({ is_active: false })
+        .eq('id', planId);
+
+      if (softErr) {
+        setToast({ type: 'error', message: softErr.message });
+      } else {
+        setToast({ type: 'success', message: 'Plan deactivated successfully.' });
+        void loadPlans();
+      }
+    } else {
+      setToast({ type: 'success', message: 'Plan deleted successfully.' });
+      void loadPlans();
+    }
+  }
 
   const loadCompanies = useCallback(async () => {
     setLoading(true);
@@ -490,76 +651,141 @@ export default function PlatformAdminPage() {
       )}
 
       {activeTab === 'billing' && (
-        <section className="space-y-5">
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-slate-900">Payment Packages</h2>
-                <p className="text-sm text-slate-500">Configure plan pricing, user limits, modules, and discounts.</p>
-              </div>
-              <div className="flex gap-2">
-                <button className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                  Seed defaults
-                </button>
-                <button className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-                  <Plus className="h-4 w-4" />
-                  Plan
-                </button>
-              </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Pesapal settings */}
+          <div className="lg:col-span-1 bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                <Key className="h-5 w-5 text-purple-600" />
+                Pesapal Config
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">Manage sandbox or production API keys.</p>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Plan</th>
-                    <th className="px-4 py-3">Monthly</th>
-                    <th className="px-4 py-3">Users</th>
-                    <th className="px-4 py-3">Discounts</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {DEFAULT_PLANS.map((plan) => (
-                    <tr key={plan.key} className="hover:bg-slate-50">
-                      <td className="px-4 py-4">
-                        <p className="font-semibold text-slate-900">{plan.name}</p>
-                        <p className="text-xs text-slate-400">{plan.key}</p>
-                      </td>
-                      <td className="px-4 py-4 text-slate-700">{plan.monthly}</td>
-                      <td className="px-4 py-4 text-slate-700">{plan.users}</td>
-                      <td className="px-4 py-4 text-slate-500">Q 5% / 6M 10% / A 15%</td>
-                      <td className="px-4 py-4">
-                        <span className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700">{plan.status}</span>
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <button className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+            {loadingConfig ? (
+              <div className="flex items-center justify-center py-12 text-slate-400 text-sm gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading credentials...
+              </div>
+            ) : (
+              <form onSubmit={savePesapalConfig} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1.5">Consumer Key</label>
+                  <input
+                    type="password"
+                    value={pesapalKey}
+                    onChange={(e) => setPesapalKey(e.target.value)}
+                    placeholder="Enter consumer key"
+                    className="w-full text-xs font-mono rounded-lg border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1.5">Consumer Secret</label>
+                  <input
+                    type="password"
+                    value={pesapalSecret}
+                    onChange={(e) => setPesapalSecret(e.target.value)}
+                    placeholder="Enter consumer secret"
+                    className="w-full text-xs font-mono rounded-lg border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1.5">IPN ID (Optional)</label>
+                  <input
+                    type="text"
+                    value={pesapalIpn}
+                    onChange={(e) => setPesapalIpn(e.target.value)}
+                    placeholder="Auto-registers on checkout if empty"
+                    className="w-full text-xs font-mono rounded-lg border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                  <span className="text-xs font-semibold text-slate-600">Sandbox / Testing Mode</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={pesapalSandbox}
+                      onChange={(e) => setPesapalSandbox(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                  </label>
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingConfig}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 hover:bg-purple-700 py-2 text-xs font-semibold text-white disabled:opacity-60 transition-colors"
+                >
+                  {savingConfig ? <Loader2 className="h-3 w-3 animate-spin" /> : <Settings className="h-3.5 w-3.5" />}
+                  Save Keys
+                </button>
+              </form>
+            )}
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-5 flex items-center justify-between">
+          {/* Pricing Plans */}
+          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-semibold text-slate-900">Subscription Architecture Gap</h2>
-                <p className="text-sm text-slate-500">Billing UI exists, but persistent plans/subscriptions still need database support.</p>
+                <h2 className="text-base font-semibold text-slate-900">Subscription Plans</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Manage plans available for clients to purchase.</p>
               </div>
-              <CalendarDays className="h-5 w-5 text-slate-400" />
+              <button
+                onClick={() => setCreatePlanOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-semibold font-medium"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add Plan
+              </button>
             </div>
-            <div className="grid gap-3 md:grid-cols-3">
-              {['subscription_plans', 'tenant_subscriptions', 'billing_records'].map((item) => (
-                <div key={item} className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4">
-                  <p className="font-mono text-xs font-semibold text-slate-700">{item}</p>
-                  <p className="mt-1 text-xs text-slate-500">Required before production billing enforcement.</p>
-                </div>
-              ))}
-            </div>
+
+            {loadingPlans ? (
+              <div className="flex items-center justify-center py-16 text-slate-400 text-sm gap-2">
+                <Loader2 className="h-5 w-5 animate-spin" /> Loading plans...
+              </div>
+            ) : plans.length === 0 ? (
+              <div className="text-center py-12 border border-dashed border-slate-200 rounded-xl bg-slate-50">
+                <p className="text-xs text-slate-400">No active pricing plans found.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto border border-slate-100 rounded-lg">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 text-slate-500 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-100">
+                    <tr>
+                      <th className="px-4 py-2.5">Plan Key</th>
+                      <th className="px-4 py-2.5">Name</th>
+                      <th className="px-4 py-2.5">Price</th>
+                      <th className="px-4 py-2.5">Limits</th>
+                      <th className="px-4 py-2.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-600 font-medium">
+                    {plans.map((p) => (
+                      <tr key={p.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-semibold text-slate-900 font-mono">{p.key}</td>
+                        <td className="px-4 py-3">{p.name} {!p.is_active && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded">inactive</span>}</td>
+                        <td className="px-4 py-3 font-semibold text-slate-900">
+                          {p.price.toLocaleString()} {p.currency} <span className="text-slate-400 text-[10px] font-normal">/ {p.billing_interval}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {p.user_limit} Users · {p.invoice_limit} Invoices
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => handleDeletePlan(p.id)}
+                            className="p-1 text-slate-400 hover:text-red-500 rounded hover:bg-red-50 transition-colors"
+                            title="Delete Plan"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </section>
+        </div>
       )}
 
       {createOpen && (
@@ -788,6 +1014,133 @@ export default function PlatformAdminPage() {
                 {stopping ? 'Stopping...' : 'Stop Impersonating'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {createPlanOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900 font-bold">Create Subscription Plan</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Define pricing details and tenant limits.</p>
+              </div>
+              <button onClick={() => setCreatePlanOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleCreatePlan}>
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="block text-xs font-semibold text-slate-600 mb-1.5">Plan Key *</span>
+                    <input
+                      required
+                      type="text"
+                      placeholder="e.g. custom-pro"
+                      value={planForm.key}
+                      onChange={(e) => setPlanForm({ ...planForm, key: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="block text-xs font-semibold text-slate-600 mb-1.5">Display Name *</span>
+                    <input
+                      required
+                      type="text"
+                      placeholder="e.g. Custom Pro"
+                      value={planForm.name}
+                      onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="block text-xs font-semibold text-slate-600 mb-1.5">Price *</span>
+                    <input
+                      required
+                      type="number"
+                      placeholder="0"
+                      value={planForm.price}
+                      onChange={(e) => setPlanForm({ ...planForm, price: Number(e.target.value) })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="block text-xs font-semibold text-slate-600 mb-1.5">Currency</span>
+                    <input
+                      required
+                      type="text"
+                      value={planForm.currency}
+                      onChange={(e) => setPlanForm({ ...planForm, currency: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <label className="block">
+                    <span className="block text-xs font-semibold text-slate-600 mb-1.5">Interval</span>
+                    <select
+                      value={planForm.billingInterval}
+                      onChange={(e) => setPlanForm({ ...planForm, billingInterval: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="monthly">Monthly</option>
+                      <option value="yearly">Yearly</option>
+                      <option value="one_time">One-time</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="block text-xs font-semibold text-slate-600 mb-1.5">Users Limit</span>
+                    <input
+                      required
+                      type="number"
+                      value={planForm.userLimit}
+                      onChange={(e) => setPlanForm({ ...planForm, userLimit: Number(e.target.value) })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="block text-xs font-semibold text-slate-600 mb-1.5">Invoice Limit</span>
+                    <input
+                      required
+                      type="number"
+                      value={planForm.invoiceLimit}
+                      onChange={(e) => setPlanForm({ ...planForm, invoiceLimit: Number(e.target.value) })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="block text-xs font-semibold text-slate-600 mb-1.5">Description</span>
+                  <textarea
+                    value={planForm.description}
+                    onChange={(e) => setPlanForm({ ...planForm, description: e.target.value })}
+                    rows={2}
+                    placeholder="Short summary of this plan"
+                    className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  />
+                </label>
+              </div>
+              <div className="flex gap-3 border-t border-slate-100 p-5">
+                <button
+                  type="button"
+                  onClick={() => setCreatePlanOpen(false)}
+                  className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingPlan}
+                  className="flex-1 rounded-lg bg-blue-600 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+                >
+                  {creatingPlan && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {creatingPlan ? 'Creating...' : 'Create Plan'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

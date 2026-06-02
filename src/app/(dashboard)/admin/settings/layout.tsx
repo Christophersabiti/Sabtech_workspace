@@ -1,13 +1,14 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Building2, Wallet, Receipt, Palette } from 'lucide-react';
+import { Building2, Wallet, Receipt, Palette, CreditCard } from 'lucide-react';
 
 const tabs = [
   { label: 'Company Profile',  href: '/admin/settings/company',         icon: Building2 },
   { label: 'Payment Methods',  href: '/admin/settings/payment-methods', icon: Wallet },
   { label: 'Invoice Settings', href: '/admin/settings/invoice',         icon: Receipt },
   { label: 'Branding',         href: '/admin/settings/branding',        icon: Palette },
+  { label: 'Billing & Subscriptions', href: '/admin/settings/billing', icon: CreditCard },
 ];
 
 export default function AdminSettingsLayout({ children }: { children: React.ReactNode }) {
