@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   Building2,
-  CalendarDays,
   CheckCircle,
   CreditCard,
   DoorOpen,
@@ -26,6 +25,7 @@ import {
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { usePlatformImpersonation } from '@/hooks/usePlatformImpersonation';
 import { createClient } from '@/lib/supabase/client';
+import { useRequireAppRole } from '@/hooks/useCurrentUser';
 
 type PlatformCompany = {
   id: string;
@@ -44,6 +44,21 @@ type PlatformCompany = {
 
 type PlatformTab = 'companies' | 'users' | 'admins' | 'billing';
 
+type PlatformPlan = {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  monthly_price: number | null;
+  annual_price: number | null;
+  currency: string;
+  billing_interval: string;
+  user_limit: number;
+  invoice_limit: number;
+  is_active: boolean;
+};
+
 const PLATFORM_TABS: Array<{ id: PlatformTab; label: string; icon: typeof Building2 }> = [
   { id: 'companies', label: 'Companies', icon: Building2 },
   { id: 'users', label: 'Users', icon: Users },
@@ -51,14 +66,8 @@ const PLATFORM_TABS: Array<{ id: PlatformTab; label: string; icon: typeof Buildi
   { id: 'billing', label: 'Billing', icon: CreditCard },
 ];
 
-const DEFAULT_PLANS = [
-  { name: 'Starter', key: 'starter', monthly: 'UGX 75,000', users: 'Up to 3', status: 'active' },
-  { name: 'Growth', key: 'growth', monthly: 'UGX 150,000', users: 'Up to 10', status: 'active' },
-  { name: 'Pro', key: 'pro', monthly: 'UGX 300,000', users: 'Up to 25', status: 'active' },
-  { name: 'Enterprise', key: 'enterprise', monthly: 'Custom', users: 'Custom', status: 'active' },
-];
-
 export default function PlatformAdminPage() {
+  const { checking } = useRequireAppRole(['super_admin']);
   const router = useRouter();
   const { setActiveCompanyId, clearActiveCompanyId } = useActiveCompany();
   const { impersonation, setStoredImpersonation, clearStoredImpersonation } = usePlatformImpersonation();
@@ -96,7 +105,7 @@ export default function PlatformAdminPage() {
   const [savingConfig, setSavingConfig] = useState(false);
 
   // Subscription Plans states
-  const [plans, setPlans] = useState<any[]>([]);
+  const [plans, setPlans] = useState<PlatformPlan[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [createPlanOpen, setCreatePlanOpen] = useState(false);
   const [creatingPlan, setCreatingPlan] = useState(false);
@@ -135,13 +144,17 @@ export default function PlatformAdminPage() {
     const { data, error } = await client
       .from('subscription_plans')
       .select('*')
-      .order('price', { ascending: true });
+      .order('monthly_price', { ascending: true });
 
     if (!error && data) {
-      setPlans(data);
+      setPlans(data as PlatformPlan[]);
     }
     setLoadingPlans(false);
   }, []);
+
+  async function syncPackageMetadata() {
+    await fetch('/api/platform/packages/sync', { method: 'POST' }).catch(() => null);
+  }
 
   useEffect(() => {
     if (activeTab === 'billing') {
@@ -171,7 +184,7 @@ export default function PlatformAdminPage() {
       } else {
         setToast({ type: 'error', message: data.error || 'Failed to save config.' });
       }
-    } catch (err) {
+    } catch {
       setToast({ type: 'error', message: 'Network error saving config.' });
     } finally {
       setSavingConfig(false);
@@ -190,11 +203,14 @@ export default function PlatformAdminPage() {
         name: planForm.name.trim(),
         description: planForm.description.trim(),
         price: Number(planForm.price),
+        monthly_price: Number(planForm.price),
+        annual_price: Number(planForm.price) > 0 ? Number(planForm.price) * 10 : 0,
         currency: planForm.currency,
         billing_interval: planForm.billingInterval,
         user_limit: Number(planForm.userLimit),
         invoice_limit: Number(planForm.invoiceLimit),
         is_active: true,
+        is_public: true,
       });
 
     if (error) {
@@ -212,6 +228,7 @@ export default function PlatformAdminPage() {
         userLimit: 3,
         invoiceLimit: 50,
       });
+      await syncPackageMetadata();
       void loadPlans();
     }
     setCreatingPlan(false);
@@ -236,10 +253,12 @@ export default function PlatformAdminPage() {
         setToast({ type: 'error', message: softErr.message });
       } else {
         setToast({ type: 'success', message: 'Plan deactivated successfully.' });
+        await syncPackageMetadata();
         void loadPlans();
       }
     } else {
       setToast({ type: 'success', message: 'Plan deleted successfully.' });
+      await syncPackageMetadata();
       void loadPlans();
     }
   }
@@ -377,6 +396,10 @@ export default function PlatformAdminPage() {
     setStopOpen(false);
     setStopping(false);
     setToast({ type: 'success', message: 'Impersonation stopped and audited.' });
+  }
+
+  if (checking) {
+    return <div className="py-16 text-center text-slate-400">Checking platform permissions...</div>;
   }
 
   return (
@@ -764,7 +787,7 @@ export default function PlatformAdminPage() {
                         <td className="px-4 py-3 font-semibold text-slate-900 font-mono">{p.key}</td>
                         <td className="px-4 py-3">{p.name} {!p.is_active && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded">inactive</span>}</td>
                         <td className="px-4 py-3 font-semibold text-slate-900">
-                          {p.price.toLocaleString()} {p.currency} <span className="text-slate-400 text-[10px] font-normal">/ {p.billing_interval}</span>
+                          {Number(p.monthly_price ?? p.price ?? 0).toLocaleString()} {p.currency} <span className="text-slate-400 text-[10px] font-normal">/ {p.billing_interval}</span>
                         </td>
                         <td className="px-4 py-3">
                           {p.user_limit} Users · {p.invoice_limit} Invoices

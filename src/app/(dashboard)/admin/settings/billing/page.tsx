@@ -42,6 +42,7 @@ type TenantSubscription = {
   billing_status?: string | null;
   trial_end_date?: string | null;
   ends_at?: string | null;
+  current_period_end?: string | null;
   subscription_plans?: BillingPlan | null;
 };
 
@@ -65,6 +66,40 @@ function trialDaysRemaining(subscription: TenantSubscription | null) {
   const trialEnd = subscription?.trial_end_date || (subscription?.status === 'trialing' ? subscription?.ends_at : null);
   if (!trialEnd) return 0;
   return Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86_400_000));
+}
+
+function packageAmount(plan: BillingPlan) {
+  return Number(plan.monthly_price ?? plan.price ?? 0);
+}
+
+function getSubscriptionDate(subscription: TenantSubscription | null, billingStatus: string) {
+  if (!subscription) return null;
+
+  if (billingStatus === 'trial_active' || billingStatus === 'trial_expired') {
+    const date = subscription.trial_end_date || subscription.ends_at;
+    return date ? { label: 'Trial ends', date } : null;
+  }
+
+  if (billingStatus === 'active' || billingStatus === 'past_due') {
+    const date = subscription.current_period_end || subscription.ends_at;
+    if (!date) return null;
+
+    const periodEnd = new Date(date);
+    const yearsOut = periodEnd.getFullYear() - new Date().getFullYear();
+    if (yearsOut >= 20) return null;
+
+    return {
+      label: billingStatus === 'past_due' ? 'Expired' : 'Renews',
+      date,
+    };
+  }
+
+  if (billingStatus === 'cancelled') {
+    const date = subscription.current_period_end || subscription.ends_at;
+    return date ? { label: 'Ends', date } : null;
+  }
+
+  return null;
 }
 
 export default function TenantBillingPage() {
@@ -175,6 +210,7 @@ export default function TenantBillingPage() {
   const activePlanKey = subscription?.subscription_plans?.key || 'none';
   const billingStatus = subscription?.billing_status || subscription?.status || 'inactive';
   const daysRemaining = trialDaysRemaining(subscription);
+  const subscriptionDate = getSubscriptionDate(subscription, billingStatus);
 
   return (
     <div className="space-y-8 max-w-5xl">
@@ -206,10 +242,10 @@ export default function TenantBillingPage() {
                   Trial: {daysRemaining} day{daysRemaining === 1 ? '' : 's'} remaining
                 </span>
               )}
-              {subscription?.ends_at && (
+              {subscriptionDate && (
                 <span className="flex items-center gap-1">
                   <Calendar className="h-3.5 w-3.5" />
-                  Expires: {new Date(subscription.ends_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  {subscriptionDate.label}: {new Date(subscriptionDate.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                 </span>
               )}
             </div>
@@ -253,6 +289,7 @@ export default function TenantBillingPage() {
             .map((plan) => {
               const isActive = plan.key === activePlanKey;
               const isPending = subscribingPlanId === plan.id;
+              const amount = packageAmount(plan);
               return (
                 <div
                   key={plan.id}
@@ -276,9 +313,9 @@ export default function TenantBillingPage() {
 
                     <div className="flex items-baseline gap-1 pt-2">
                       <span className="text-2xl font-black text-slate-900">
-                        {formatMoney(plan.monthly_price ?? plan.price, plan.currency)}
+                        {formatMoney(amount, plan.currency)}
                       </span>
-                      {(plan.monthly_price ?? plan.price) > 0 && (
+                      {amount > 0 && (
                         <span className="text-slate-400 text-xs font-semibold">
                           / month
                         </span>

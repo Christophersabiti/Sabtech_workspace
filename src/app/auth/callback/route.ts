@@ -129,12 +129,28 @@ export async function GET(req: NextRequest) {
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // Ensure this user has an app_users record; create one if first login
-      const { data: existing } = await adminSupabase
+      const sessionEmail = (session.user.email ?? '').toLowerCase();
+
+      // Ensure this user has an app_users record. Prefer auth_user_id, then
+      // link an email-only placeholder such as the seeded Platform Super Admin.
+      const { data: existingByAuth } = await adminSupabase
         .from('app_users')
-        .select('id')
+        .select('id, full_name, status')
         .eq('auth_user_id', session.user.id)
-        .single();
+        .maybeSingle();
+
+      const { data: existingByEmail } = !existingByAuth && sessionEmail
+        ? await adminSupabase
+            .from('app_users')
+            .select('id, full_name, status')
+            .ilike('email', sessionEmail)
+            .is('auth_user_id', null)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle()
+        : { data: null };
+
+      const existing = existingByAuth ?? existingByEmail;
 
       // Check if there's a pending invitation for this email
       const { data: invitation } = await adminSupabase
@@ -164,13 +180,18 @@ export async function GET(req: NextRequest) {
 
         appUserId = createdUser?.id;
       } else {
-        // Update last login
+        // Update last login and link email placeholders to the auth user.
         await adminSupabase
           .from('app_users')
           .update({
+            auth_user_id: session.user.id,
+            email: session.user.email ?? '',
+            full_name: existing.full_name ?? session.user.user_metadata?.full_name ?? session.user.user_metadata?.name ?? null,
+            status: existing.status === 'invited' ? 'active' : existing.status ?? 'active',
             last_login_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           })
-          .eq('auth_user_id', session.user.id);
+          .eq('id', existing.id);
       }
 
       if (invitation && appUserId) {

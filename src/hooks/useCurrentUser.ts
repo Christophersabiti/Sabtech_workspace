@@ -12,6 +12,7 @@ export type CurrentUser = {
   fullName:     string | null;
   avatarUrl:    string | null;
   role:         string;
+  appRole:      string;
   status:       string;
 };
 
@@ -67,6 +68,7 @@ export function useCurrentUser() {
           fullName:  appUser.full_name,
           avatarUrl: appUser.avatar_url,
           role:      membership?.role_id ?? appUser.role,
+          appRole:   appUser.role,
           status:    membership?.status ?? appUser.status,
         });
       } else {
@@ -78,6 +80,7 @@ export function useCurrentUser() {
           fullName:  session.user.user_metadata?.full_name ?? null,
           avatarUrl: session.user.user_metadata?.avatar_url ?? null,
           role:      'staff',
+          appRole:   'staff',
           status:    'active',
         });
       }
@@ -131,6 +134,23 @@ export function useRequireRole(
   }, [user, loading, allowedRoles, redirectTo, router]);
 
   return { checking: loading || !user || !allowedRoles.includes(user.role) };
+}
+
+export function useRequireAppRole(
+  allowedRoles: string[],
+  redirectTo = '/',
+): { checking: boolean } {
+  const router = useRouter();
+  const { user, loading } = useCurrentUser();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user || !allowedRoles.includes(user.appRole)) {
+      router.replace(redirectTo);
+    }
+  }, [user, loading, allowedRoles, redirectTo, router]);
+
+  return { checking: loading || !user || !allowedRoles.includes(user.appRole) };
 }
 
 // ─── Permission Matrix ────────────────────────────────────────────────────────

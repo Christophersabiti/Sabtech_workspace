@@ -7,13 +7,14 @@ import {
   Coins,
   Loader2,
   PackagePlus,
+  RefreshCw,
   Save,
   Tag,
   ToggleLeft,
   ToggleRight,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { useRequireRole } from '@/hooks/useCurrentUser';
+import { useRequireAppRole } from '@/hooks/useCurrentUser';
 import type { FeatureKey } from '@/lib/entitlements';
 import { FEATURE_LABELS } from '@/lib/entitlements';
 
@@ -54,13 +55,14 @@ type CouponRow = {
 };
 
 export default function PlatformPackagesPage() {
-  const { checking } = useRequireRole(['super_admin']);
+  const { checking } = useRequireAppRole(['super_admin']);
   const supabase = useMemo(() => createClient(), []);
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [coupons, setCoupons] = useState<CouponRow[]>([]);
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [newPackage, setNewPackage] = useState({
     key: '',
@@ -113,6 +115,25 @@ export default function PlatformPackagesPage() {
     setPackages(rows => rows.map(row => row.id === id ? { ...row, [field]: value } : row));
   }
 
+  async function syncPackages(showToast = true) {
+    setSyncing(true);
+    const res = await fetch('/api/platform/packages/sync', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setToast({ type: 'error', message: data.error || 'Package sync failed.' });
+      setSyncing(false);
+      return false;
+    }
+
+    if (showToast) {
+      setToast({ type: 'success', message: 'Packages synced with tenant billing settings.' });
+    }
+    setSyncing(false);
+    await load();
+    return true;
+  }
+
   async function savePackage(pkg: PackageRow) {
     setSavingId(pkg.id);
     const { error } = await supabase
@@ -134,7 +155,13 @@ export default function PlatformPackagesPage() {
       .eq('id', pkg.id);
 
     setSavingId(null);
-    setToast(error ? { type: 'error', message: error.message } : { type: 'success', message: 'Package saved.' });
+    if (error) {
+      setToast({ type: 'error', message: error.message });
+      return;
+    }
+
+    setToast({ type: 'success', message: 'Package saved.' });
+    await syncPackages(false);
   }
 
   async function createPackage(event: FormEvent) {
@@ -181,7 +208,7 @@ export default function PlatformPackagesPage() {
       invoice_limit: 50,
     });
     setToast({ type: 'success', message: 'Package created.' });
-    await load();
+    await syncPackages(false);
   }
 
   async function toggleFeature(pkg: PackageRow, featureKey: FeatureKey) {
@@ -263,8 +290,21 @@ export default function PlatformPackagesPage() {
         <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
           <PackagePlus className="h-6 w-6" />
         </div>
-        <h1 className="text-2xl font-bold text-slate-900">Package Configuration</h1>
-        <p className="mt-1 text-sm text-slate-500">Configure packages, feature entitlements, limits, visibility, and coupons.</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Package Configuration</h1>
+            <p className="mt-1 text-sm text-slate-500">Configure packages, feature entitlements, limits, visibility, and coupons.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void syncPackages()}
+            disabled={syncing}
+            className="inline-flex w-fit items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Sync tenants
+          </button>
+        </div>
       </div>
 
       {loading ? (

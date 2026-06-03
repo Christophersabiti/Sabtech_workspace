@@ -488,6 +488,8 @@ export function SidebarNavContent({
   const router = useRouter();
   const user = useCurrentUserInfo();
   const branding = useCompanyBranding();
+  const showTenantAdmin = user?.role === 'super_admin' || user?.role === 'admin';
+  const showPlatformAdmin = user?.appRole === 'super_admin';
 
   async function handleLogout() {
     const supabase = createClient();
@@ -521,7 +523,7 @@ export function SidebarNavContent({
         })}
 
         {/* Admin section — only for super_admin and admin */}
-        {(user?.role === 'super_admin' || user?.role === 'admin') && (
+        {(showTenantAdmin || showPlatformAdmin) && (
           <>
             {!collapsed && (
               <div className="px-5 pt-6 pb-2 text-xs font-semibold tracking-[0.2em] text-slate-500 uppercase">
@@ -529,25 +531,29 @@ export function SidebarNavContent({
               </div>
             )}
 
-            <SettingsSection collapsed={collapsed} pathname={pathname} />
+            {showTenantAdmin && (
+              <>
+                <SettingsSection collapsed={collapsed} pathname={pathname} />
 
-            {adminNav.map(({ label, href, icon }) => {
-              const isActive = pathname.startsWith(href);
+                {adminNav.map(({ label, href, icon }) => {
+                  const isActive = pathname.startsWith(href);
 
-              return (
-                <NavItem
-                  key={href}
-                  href={href}
-                  label={label}
-                  icon={icon as ElementType}
-                  isActive={isActive}
-                  collapsed={collapsed}
-                  onClick={onNavClick}
-                />
-              );
-            })}
+                  return (
+                    <NavItem
+                      key={href}
+                      href={href}
+                      label={label}
+                      icon={icon as ElementType}
+                      isActive={isActive}
+                      collapsed={collapsed}
+                      onClick={onNavClick}
+                    />
+                  );
+                })}
+              </>
+            )}
 
-            {user?.appRole === 'super_admin' && platformNav.map(({ label, href, icon }) => {
+            {showPlatformAdmin && platformNav.map(({ label, href, icon }) => {
               const isActive = href === '/admin/platform' ? pathname === href : pathname.startsWith(href);
 
               return (

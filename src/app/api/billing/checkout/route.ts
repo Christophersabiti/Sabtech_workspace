@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null) as {
     companyId?: string;
     planId?: string;
+    couponCode?: string;
   } | null;
 
   const companyId = body?.companyId;
@@ -69,6 +70,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Selected subscription plan not found.' }, { status: 404 });
   }
 
+  const checkoutAmount = Number(plan.monthly_price ?? plan.price ?? 0);
+
   try {
     // 1. Resolve Pesapal Configuration
     const config = await getPesapalConfig();
@@ -98,7 +101,7 @@ export async function POST(req: NextRequest) {
     // 4. Submit checkout request
     const checkoutResult = await submitPesapalOrder(token, config.sandboxMode, {
       merchantReference,
-      amount: plan.price,
+      amount: checkoutAmount,
       currency: plan.currency,
       description: `Upgrade to Sabtech ${plan.name} Plan`,
       callbackUrl: `${origin}/admin/settings/billing/callback`,
@@ -116,7 +119,7 @@ export async function POST(req: NextRequest) {
         plan_id: planId,
         pesapal_tracking_id: checkoutResult.orderTrackingId,
         merchant_reference: merchantReference,
-        amount: plan.price,
+        amount: checkoutAmount,
         currency: plan.currency,
         status: 'pending',
         raw_response: {
