@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, Suspense, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { FeatureBlockedState } from '@/components/billing/FeatureBlockedState';
 import { Client, InvoiceSchedule, Project, Service } from '@/types';
 import { formatCurrency, calculateLineTotal } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -35,6 +37,7 @@ function NewInvoiceForm() {
   const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const { loading: entitlementLoading, canUse } = useEntitlements();
   const scheduleIdFromQuery = searchParams.get('schedule') || '';
   const quotationIdFromQuery = searchParams.get('quotation') || '';
   const amountFromQuery = searchParams.get('amount');
@@ -366,6 +369,15 @@ function NewInvoiceForm() {
   }
 
   const inputCls = 'border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full';
+
+  if (!entitlementLoading && !canUse('invoices.create')) {
+    return (
+      <FeatureBlockedState
+        title="Invoice creation is paused"
+        description="This company package or billing status does not currently allow new invoices. Existing invoices remain available."
+      />
+    );
+  }
 
   return (
     <div>

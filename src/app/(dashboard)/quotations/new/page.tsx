@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { FeatureBlockedState } from '@/components/billing/FeatureBlockedState';
 import { Client } from '@/types';
 import { formatCurrency } from '@/lib/utils';
 import { ArrowLeft, Plus, Trash2, Save, Send } from 'lucide-react';
@@ -57,6 +59,7 @@ export default function NewQuotationPage() {
   const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const { loading: entitlementLoading, canUse } = useEntitlements();
 
   const [clients, setClients]       = useState<Client[]>([]);
   const [saving, setSaving]         = useState(false);
@@ -188,6 +191,15 @@ export default function NewQuotationPage() {
   }, [activeCompanyId, companyLoading, header, items, subtotal, taxAmount, total, supabase, router]);
 
   const inputCls = 'w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+  if (!entitlementLoading && !canUse('quotations.create')) {
+    return (
+      <FeatureBlockedState
+        title="Quotation creation is paused"
+        description="This company package or billing status does not currently allow new quotations. Existing quotations remain available."
+      />
+    );
+  }
 
   return (
     <div className="max-w-5xl">

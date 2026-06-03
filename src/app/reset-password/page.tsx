@@ -45,8 +45,8 @@ export default function ResetPasswordPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mb-4 inline-flex h-16 w-16 items-center justify-center">
-            <Image src="/logo.svg" alt="Sabtech Online" width={64} height={64} />
+          <div className="mb-4 inline-flex items-center justify-center">
+            <Image src="/brand/sabtech-workspace-horizontal-dark.svg" alt="Sabtech Workspace" width={280} height={62} />
           </div>
           <h1 className="text-2xl font-black text-white">Set a new password</h1>
           <p className="mt-1 text-sm text-slate-400">Choose a secure password for your account.</p>
@@ -80,7 +80,7 @@ export default function ResetPasswordPage() {
                     required
                     value={field.value}
                     onChange={(event) => field.setValue(event.target.value)}
-                    className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-[#2952C8]"
                   />
                   <button
                     type="button"
@@ -97,14 +97,14 @@ export default function ResetPasswordPage() {
           <button
             type="submit"
             disabled={loading}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-purple-700 disabled:opacity-60"
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#091545] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#112068] disabled:opacity-60"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
             {loading ? 'Updating...' : 'Update password'}
           </button>
 
           {message && (
-            <Link href="/login" className="mt-5 block text-center text-sm font-medium text-purple-600 hover:text-purple-700">
+            <Link href="/login" className="mt-5 block text-center text-sm font-medium text-[#2952C8] hover:text-[#112068]">
               Continue to sign in
             </Link>
           )}

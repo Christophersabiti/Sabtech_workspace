@@ -7,6 +7,7 @@ import {
   registerPesapalIpn,
   submitPesapalOrder,
 } from '@/services/pesapal';
+import { EntitlementError, assertFeatureEntitlement } from '@/lib/entitlements';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Company ID and Plan ID are required.' }, { status: 400 });
   }
 
-  // Verify the user is an admin or member of the target company
+  // Verify the user is an admin of the target company
   const adminSupabase = createAdminSupabase();
   const { data: membership } = await adminSupabase
     .from('company_users')
@@ -41,6 +42,19 @@ export async function POST(req: NextRequest) {
 
   if (!membership || membership.status !== 'active') {
     return NextResponse.json({ error: 'You are not an active member of this company.' }, { status: 403 });
+  }
+
+  if (!['super_admin', 'admin'].includes(membership.role_id as string)) {
+    return NextResponse.json({ error: 'Only a Company Admin can manage billing.' }, { status: 403 });
+  }
+
+  try {
+    await assertFeatureEntitlement(adminSupabase, session.user.id, companyId, 'billing.manage');
+  } catch (error) {
+    if (error instanceof EntitlementError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
   }
 
   // Load the target subscription plan
@@ -105,6 +119,10 @@ export async function POST(req: NextRequest) {
         amount: plan.price,
         currency: plan.currency,
         status: 'pending',
+        raw_response: {
+          provider: 'pesapal',
+          checkout_created_at: new Date().toISOString(),
+        },
       });
 
     if (txErr) {

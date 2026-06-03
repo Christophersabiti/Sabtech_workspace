@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { FeatureBlockedState } from '@/components/billing/FeatureBlockedState';
 import { Client, Project } from '@/types';
 import { formatCurrency, formatDate, BILLING_TYPE_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -35,6 +37,7 @@ const statusColor: Record<string, string> = {
 export default function ProjectsPage() {
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const { loading: entitlementLoading, canUse } = useEntitlements();
   const [projects, setProjects] = useState<(Project & { client: Client })[]>([]);
   const [clients, setClients]   = useState<Client[]>([]);
   const [loading, setLoading]   = useState(true);
@@ -125,12 +128,22 @@ export default function ProjectsPage() {
         action={
           <button
             onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            disabled={!entitlementLoading && !canUse('projects.create')}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="h-4 w-4" /> New Project
           </button>
         }
       />
+
+      {!entitlementLoading && !canUse('projects.create') && (
+        <div className="mb-6">
+          <FeatureBlockedState
+            title="Project creation is paused"
+            description="This company package or billing status does not currently allow new projects. Existing project data remains available."
+          />
+        </div>
+      )}
 
       <div className="relative mb-6">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />

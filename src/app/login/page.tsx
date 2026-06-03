@@ -74,16 +74,15 @@ function LoginForm() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-purple-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-[#091545] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
 
         {/* Logo + Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 mb-4">
-            <Image src="/logo.svg" alt="Sabtech Online" width={64} height={64} />
+          <div className="inline-flex items-center justify-center mb-4">
+            <Image src="/brand/sabtech-workspace-horizontal-dark.svg" alt="Sabtech Workspace" width={280} height={62} priority />
           </div>
-          <h1 className="text-2xl font-black text-white">Sabtech Online</h1>
-          <p className="text-slate-400 text-sm mt-1">Sign in to Sabtech Workspace</p>
+          <p className="text-[#E1F5EE] text-sm mt-1">Sign in to your company workspace</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">
@@ -143,7 +142,7 @@ function LoginForm() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#2952C8]"
                 />
               </div>
             </div>
@@ -157,7 +156,7 @@ function LoginForm() {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-10 pr-10 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full pl-10 pr-10 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#2952C8]"
                 />
                 <button
                   type="button"
@@ -169,21 +168,24 @@ function LoginForm() {
               </div>
             </div>
             <div className="-mt-2 text-right">
-              <Link href="/forgot-password" className="text-xs font-medium text-purple-600 hover:text-purple-700">
+              <Link href="/forgot-password" className="text-xs font-medium text-[#2952C8] hover:text-[#112068]">
                 Forgot password?
               </Link>
             </div>
             <button
               type="submit"
               disabled={loading || !!oauthLoading}
-              className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-60 transition-colors"
+              className="w-full bg-[#091545] hover:bg-[#112068] text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-60 transition-colors"
             >
               {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Signing in…</> : 'Sign In'}
             </button>
           </form>
 
           <p className="text-center text-xs text-slate-400 mt-6">
-            Access is by invitation only. Contact your administrator for access.
+            New company?{' '}
+            <Link href="/signup" className="font-semibold text-[#2952C8] hover:text-[#112068]">
+              Create an account
+            </Link>
           </p>
         </div>
       </div>
@@ -195,7 +197,7 @@ export default function LoginPage() {
   return (
     <Suspense fallback={
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#5DCAA5]" />
       </div>
     }>
       <LoginForm />

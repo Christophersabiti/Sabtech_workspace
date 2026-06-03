@@ -24,7 +24,7 @@ export function TopBar() {
 
       {/* Logo + Name */}
       <div className="flex items-center gap-2.5">
-        <Image src="/logo.svg" alt="SAB" width={28} height={28} />
+        <Image src="/logo.svg" alt="Sabtech Workspace" width={28} height={28} />
         <span className="max-w-[180px] truncate text-sm font-bold text-white">
           {activeCompany?.name ?? 'Sabtech Online'}
         </span>

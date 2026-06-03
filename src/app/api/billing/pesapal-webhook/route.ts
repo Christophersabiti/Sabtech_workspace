@@ -98,8 +98,14 @@ export async function GET(req: NextRequest) {
             company_id: companyId,
             plan_id: planId,
             status: 'active',
+            billing_status: 'active',
+            subscription_status: 'active',
             starts_at: startsAt.toISOString(),
             ends_at: endsAt.toISOString(),
+            current_period_start: startsAt.toISOString(),
+            current_period_end: endsAt.toISOString(),
+            payment_provider: 'pesapal',
+            provider_subscription_id: orderTrackingId,
             updated_at: new Date().toISOString(),
           }, { onConflict: 'company_id' });
 

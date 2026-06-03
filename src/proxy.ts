@@ -1,7 +1,17 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/accept-invite', '/api/workspaces'];
+const PUBLIC_PATHS = [
+  '/welcome',
+  '/pricing',
+  '/signup',
+  '/login',
+  '/forgot-password',
+  '/reset-password',
+  '/auth/callback',
+  '/auth/accept-invite',
+  '/api/workspaces',
+];
 const ADMIN_PATHS  = [
   '/admin/users/roles',
   '/admin/users/invitations',
@@ -11,6 +21,8 @@ const ADMIN_PATHS  = [
   '/admin/settings/branding',
   '/admin/settings/payment-methods',
   '/admin/settings',
+  '/admin/platform/packages',
+  '/admin/platform',
 ];
 
 export async function proxy(req: NextRequest) {
@@ -20,8 +32,11 @@ export async function proxy(req: NextRequest) {
   if (
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico' ||
+    pathname === '/favicon.svg' ||
     pathname === '/logo.svg' ||
     pathname === '/manifest.json' ||
+    pathname === '/manifest.webmanifest' ||
+    pathname.startsWith('/brand/') ||
     pathname.startsWith('/icons/') ||
     pathname.startsWith('/manifest')
   ) {
@@ -56,6 +71,10 @@ export async function proxy(req: NextRequest) {
 
   // No session → redirect to login
   if (!session) {
+    if (pathname === '/') {
+      return NextResponse.redirect(new URL('/welcome', req.url));
+    }
+
     const loginUrl = new URL('/login', req.url);
     loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);
@@ -63,6 +82,20 @@ export async function proxy(req: NextRequest) {
 
   // Admin-only paths → check role in app_users
   if (ADMIN_PATHS.some(p => pathname.startsWith(p))) {
+    if (pathname.startsWith('/admin/platform')) {
+      const { data: platformUser } = await supabase
+        .from('app_users')
+        .select('role, status')
+        .eq('auth_user_id', session.user.id)
+        .maybeSingle();
+
+      if (!platformUser || platformUser.role !== 'super_admin' || platformUser.status !== 'active') {
+        return NextResponse.redirect(new URL('/', req.url));
+      }
+
+      return response;
+    }
+
     const { data: adminMembership } = await supabase
       .from('company_users')
       .select('role_id')

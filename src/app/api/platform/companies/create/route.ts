@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { requirePlatformSuperAdmin } from '@/lib/platformAdmin';
 import { assertRateLimit, getRequestIdentity, RateLimitError } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
-const PLANS = ['starter', 'growth', 'pro', 'enterprise'];
+const PLANS = ['starter', 'professional', 'business', 'enterprise', 'growth', 'pro'];
 const STATUSES = ['active', 'suspended', 'archived'];
 
 function slugify(value: string) {
@@ -18,6 +19,64 @@ function slugify(value: string) {
 
 function isEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+async function startTrialSubscription(adminSupabase: SupabaseClient, companyId: string, requestedPlanKey: string) {
+  const normalizedPlanKey = requestedPlanKey === 'growth'
+    ? 'professional'
+    : requestedPlanKey === 'pro'
+      ? 'business'
+      : requestedPlanKey;
+
+  let { data: plan } = await adminSupabase
+    .from('subscription_plans')
+    .select('id, key, trial_days')
+    .eq('key', normalizedPlanKey)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (!plan) {
+    const fallback = await adminSupabase
+      .from('subscription_plans')
+      .select('id, key, trial_days')
+      .eq('key', 'starter')
+      .maybeSingle();
+    plan = fallback.data;
+  }
+
+  if (!plan) {
+    throw new Error('No active subscription package is available for trial setup.');
+  }
+
+  const startsAt = new Date();
+  const trialDays = Number(plan.trial_days ?? 7);
+  const endsAt = new Date(startsAt);
+  endsAt.setDate(startsAt.getDate() + trialDays);
+
+  const { error } = await adminSupabase
+    .from('company_subscriptions')
+    .upsert({
+      company_id: companyId,
+      plan_id: plan.id,
+      status: 'trialing',
+      billing_status: trialDays > 0 ? 'trial_active' : 'trial_expired',
+      subscription_status: 'trialing',
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+      trial_start_date: startsAt.toISOString(),
+      trial_end_date: endsAt.toISOString(),
+      current_period_start: startsAt.toISOString(),
+      current_period_end: endsAt.toISOString(),
+      payment_provider: 'pesapal',
+      updated_at: startsAt.toISOString(),
+    }, { onConflict: 'company_id' });
+
+  if (error) throw error;
+
+  return {
+    planKey: plan.key as string,
+    trialEndsAt: endsAt.toISOString(),
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -130,6 +189,16 @@ export async function POST(req: NextRequest) {
     ].map((name) => ({ company_id: company.id, name, is_system: true })))
     .select('id');
 
+  const trial = await startTrialSubscription(adminSupabase, company.id, plan);
+
+  await adminSupabase
+    .from('companies')
+    .update({
+      plan: trial.planKey,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', company.id);
+
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const { data: invitation, error: inviteError } = await adminSupabase
     .from('invitations')
@@ -171,9 +240,10 @@ export async function POST(req: NextRequest) {
     new_values: {
       companyName,
       slug,
-      plan,
+      plan: trial.planKey,
       status,
       adminEmail,
+      trialEndDate: trial.trialEndsAt,
       seededExpenseCategories: categories?.length ?? 0,
     },
   });

@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { useEntitlements } from '@/hooks/useEntitlements';
+import { FeatureBlockedState } from '@/components/billing/FeatureBlockedState';
 import { ArrowLeft, Save } from 'lucide-react';
 
 const CURRENCIES = ['UGX', 'USD', 'EUR', 'GBP', 'KES', 'TZS', 'RWF'];
@@ -13,6 +15,7 @@ export default function NewClientPage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
+  const { loading: entitlementLoading, canUse } = useEntitlements();
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -81,6 +84,15 @@ export default function NewClientPage() {
       router.push(`/clients/${newClient.id}`);
       router.refresh();
     }
+  }
+
+  if (!entitlementLoading && !canUse('clients.create')) {
+    return (
+      <FeatureBlockedState
+        title="Client creation is paused"
+        description="This company package or billing status does not currently allow new clients. Existing client data remains available."
+      />
+    );
   }
 
   return (

@@ -36,8 +36,8 @@ export default function ForgotPasswordPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mb-4 inline-flex h-16 w-16 items-center justify-center">
-            <Image src="/logo.svg" alt="Sabtech Online" width={64} height={64} />
+          <div className="mb-4 inline-flex items-center justify-center">
+            <Image src="/brand/sabtech-workspace-horizontal-dark.svg" alt="Sabtech Workspace" width={280} height={62} />
           </div>
           <h1 className="text-2xl font-black text-white">Reset your password</h1>
           <p className="mt-1 text-sm text-slate-400">Use the email linked to your invitation.</p>
@@ -67,7 +67,7 @@ export default function ForgotPasswordPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@example.com"
-                className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#2952C8]"
               />
             </div>
           </label>
@@ -75,7 +75,7 @@ export default function ForgotPasswordPage() {
           <button
             type="submit"
             disabled={loading}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-purple-700 disabled:opacity-60"
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#091545] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#112068] disabled:opacity-60"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
             {loading ? 'Sending...' : 'Send reset link'}

@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireTenantEntityAccess } from '@/lib/authz';
+import { EntitlementError, assertFeatureEntitlement } from '@/lib/entitlements';
 
 const COMPANY_DEFAULTS = {
   name: 'Sabtech Online',
@@ -166,6 +167,15 @@ export async function GET(
 
   const isPrint = req.nextUrl.searchParams.get('print') === '1';
   const supabase = getSupabase();
+
+  try {
+    await assertFeatureEntitlement(supabase, access.authUserId, access.companyId, 'reports.export');
+  } catch (error) {
+    if (error instanceof EntitlementError) {
+      return new NextResponse(error.message, { status: error.status });
+    }
+    throw error;
+  }
 
   const [
     { data: project },

@@ -4,24 +4,33 @@ import { OfflineBanner } from '@/components/ui/OfflineBanner';
 
 export const metadata: Metadata = {
   title: 'Sabtech Workspace',
-  description: 'Unified workspace for consultants and project managers, managed under Sabtech Online',
-  manifest: '/manifest.json',
+  description: 'Commercial SaaS workspace for clients, projects, quotations, invoices, expenses, reports, and multi-company operations.',
+  applicationName: 'Sabtech Workspace',
+  manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'default',
+    statusBarStyle: 'black-translucent',
     title: 'Sabtech Workspace',
   },
   icons: {
     icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
       { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
       { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
-    apple: '/icons/apple-touch-icon.png',
+    apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
+  openGraph: {
+    title: 'Sabtech Workspace',
+    description: 'Run clients, projects, invoices, expenses, and reports in a branded multi-company SaaS workspace.',
+    siteName: 'Sabtech Workspace',
+    type: 'website',
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: '#8b35c1',
+  themeColor: '#091545',
   width: 'device-width',
   initialScale: 1,
   minimumScale: 1,

@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { PermissionService } from '@/lib/permissionService';
 
 type EntityAccessResult =
-  | { ok: true; companyId: string }
+  | { ok: true; companyId: string; authUserId: string }
   | { ok: false; status: 401 | 403 | 404; message: string };
 
 export async function requireTenantEntityAccess(
@@ -56,5 +56,5 @@ export async function requireTenantEntityAccess(
     return { ok: false, status: 403, message: 'You do not have access to this document' };
   }
 
-  return { ok: true, companyId: data.company_id as string };
+  return { ok: true, companyId: data.company_id as string, authUserId: session.user.id };
 }

@@ -9,10 +9,10 @@ import { Save, CheckCircle, AlertCircle, Palette, Upload, X } from 'lucide-react
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 const PRESET_PRIMARIES = [
-  '#0f172a', '#1e3a5f', '#1d4ed8', '#6d28d9', '#be185d', '#065f46', '#92400e', '#1f2937',
+  '#091545', '#112068', '#2952C8', '#0f172a', '#1d4ed8', '#065f46', '#92400e', '#1f2937',
 ];
 const PRESET_ACCENTS = [
-  '#7c2cbf', '#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#db2777', '#4f46e5',
+  '#1D9E75', '#5DCAA5', '#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#4f46e5',
 ];
 
 function ColorSwatch({
@@ -37,9 +37,14 @@ export default function BrandingSettingsPage() {
   const [logoUploading, setLogoUploading] = useState(false);
   const [form, setForm] = useState({
     logo_url: null as string | null,
-    primary_color: '#0f172a',
-    accent_color: '#7c2cbf',
+    favicon_url: null as string | null,
+    primary_color: '#091545',
+    secondary_color: '#2952C8',
+    accent_color: '#1D9E75',
     company_name: 'Sabtech Online',
+    tagline: '',
+    invoice_logo_url: null as string | null,
+    report_header_logo_url: null as string | null,
     tin: '1009345230',
     show_logo_on_invoice: true,
     show_tin_on_invoice: true,
@@ -55,7 +60,7 @@ export default function BrandingSettingsPage() {
       setLoading(true);
       const { data } = await supabase
         .from('company_settings')
-        .select('logo_url,primary_color,accent_color,company_name,tin,show_logo_on_invoice,show_tin_on_invoice')
+        .select('logo_url,favicon_url,primary_color,secondary_color,accent_color,company_name,tagline,invoice_logo_url,report_header_logo_url,tin,show_logo_on_invoice,show_tin_on_invoice')
         .eq('company_id', activeCompanyId)
         .maybeSingle();
       if (data) setForm(f => ({ ...f, ...data }));
@@ -66,6 +71,27 @@ export default function BrandingSettingsPage() {
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm(f => ({ ...f, [k]: v }));
+  }
+
+  function resetBranding() {
+    setForm(f => ({
+      ...f,
+      logo_url: null,
+      favicon_url: null,
+      primary_color: '#091545',
+      secondary_color: '#2952C8',
+      accent_color: '#1D9E75',
+      tagline: '',
+      invoice_logo_url: null,
+      report_header_logo_url: null,
+    }));
+  }
+
+  function setNullableUrl(
+    key: 'favicon_url' | 'invoice_logo_url' | 'report_header_logo_url',
+    value: string,
+  ) {
+    setForm(f => ({ ...f, [key]: value.trim() || null }));
   }
 
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -182,6 +208,26 @@ export default function BrandingSettingsPage() {
       <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
         <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Brand Colors</h2>
 
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="block text-sm font-medium text-slate-700 mb-2">Company Display Name</span>
+            <input
+              value={form.company_name}
+              onChange={e => set('company_name', e.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-sm font-medium text-slate-700 mb-2">Company Tagline</span>
+            <input
+              value={form.tagline}
+              onChange={e => set('tagline', e.target.value)}
+              placeholder="Optional"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+        </div>
+
         {/* Primary Color */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-3">
@@ -199,6 +245,25 @@ export default function BrandingSettingsPage() {
               title="Custom color"
             />
             <code className="text-sm font-mono text-slate-600 bg-slate-100 px-2 py-1 rounded">{form.primary_color}</code>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-3">
+            Secondary Color
+            <span className="ml-2 text-xs text-slate-400">Used for supporting UI states</span>
+          </label>
+          <div className="flex items-center gap-3 flex-wrap">
+            {PRESET_PRIMARIES.map(c => (
+              <ColorSwatch key={c} color={c} selected={form.secondary_color === c} onClick={() => set('secondary_color', c)} />
+            ))}
+            <input
+              type="color" value={form.secondary_color}
+              onChange={e => set('secondary_color', e.target.value)}
+              className="w-8 h-8 rounded-lg border border-slate-200 cursor-pointer"
+              title="Custom color"
+            />
+            <code className="text-sm font-mono text-slate-600 bg-slate-100 px-2 py-1 rounded">{form.secondary_color}</code>
           </div>
         </div>
 
@@ -223,6 +288,39 @@ export default function BrandingSettingsPage() {
         </div>
       </div>
 
+      <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Document and App Brand Assets</h2>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="block text-sm font-medium text-slate-700 mb-2">Company Favicon URL</span>
+            <input
+              value={form.favicon_url ?? ''}
+              onChange={e => setNullableUrl('favicon_url', e.target.value)}
+              placeholder="https://..."
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-sm font-medium text-slate-700 mb-2">Invoice / Quotation Logo URL</span>
+            <input
+              value={form.invoice_logo_url ?? ''}
+              onChange={e => setNullableUrl('invoice_logo_url', e.target.value)}
+              placeholder="https://..."
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className="block text-sm font-medium text-slate-700 mb-2">Report Header Logo URL</span>
+            <input
+              value={form.report_header_logo_url ?? ''}
+              onChange={e => setNullableUrl('report_header_logo_url', e.target.value)}
+              placeholder="https://..."
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+        </div>
+      </div>
+
       {/* Live Invoice Preview */}
       <div className="bg-white border border-slate-200 rounded-xl p-6">
         <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-4">Invoice Header Preview</h2>
@@ -241,6 +339,7 @@ export default function BrandingSettingsPage() {
             </div>
             <div>
               <div style={{ color: form.primary_color }} className="text-lg font-black">{form.company_name}</div>
+              {form.tagline && <div className="text-xs text-slate-500">{form.tagline}</div>}
               <div className="text-xs text-slate-400">info@sabtechonline.com · +256 777 293 933</div>
               {form.show_tin_on_invoice && (
                 <div className="text-xs text-slate-400">TIN: <strong style={{ color: form.primary_color }}>{form.tin}</strong></div>
@@ -268,6 +367,13 @@ export default function BrandingSettingsPage() {
       </div>
 
       <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={resetBranding}
+          className="mr-3 inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-6 py-2.5 rounded-lg text-sm font-semibold"
+        >
+          Reset to Defaults
+        </button>
         <button
           type="submit"
           disabled={saveState === 'saving'}

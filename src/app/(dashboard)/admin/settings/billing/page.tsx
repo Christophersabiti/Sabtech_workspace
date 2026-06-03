@@ -15,17 +15,70 @@ import {
   Zap,
 } from 'lucide-react';
 
+type PackageFeatureRow = {
+  feature_key?: string;
+  feature_name: string;
+  enabled: boolean;
+  limit_value?: number | null;
+};
+
+type BillingPlan = {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  price: number;
+  monthly_price: number | null;
+  annual_price: number | null;
+  currency: string;
+  billing_interval: string;
+  user_limit: number;
+  invoice_limit: number;
+  package_features?: PackageFeatureRow[];
+};
+
+type TenantSubscription = {
+  status?: string | null;
+  billing_status?: string | null;
+  trial_end_date?: string | null;
+  ends_at?: string | null;
+  subscription_plans?: BillingPlan | null;
+};
+
+type BillingTransaction = {
+  id: string;
+  merchant_reference: string;
+  amount: number;
+  currency: string;
+  payment_method: string | null;
+  status: string;
+  created_at: string;
+  subscription_plans?: { name: string | null } | null;
+};
+
+function formatMoney(value: number | null | undefined, currency = 'UGX') {
+  if (!value) return 'Custom';
+  return `${Number(value).toLocaleString()} ${currency}`;
+}
+
+function trialDaysRemaining(subscription: TenantSubscription | null) {
+  const trialEnd = subscription?.trial_end_date || (subscription?.status === 'trialing' ? subscription?.ends_at : null);
+  if (!trialEnd) return 0;
+  return Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86_400_000));
+}
+
 export default function TenantBillingPage() {
   const { checking } = useRequireRole(['super_admin', 'admin']);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const supabase = useMemo(() => createClient(), []);
 
   const [loading, setLoading] = useState(true);
-  const [plans, setPlans] = useState<any[]>([]);
-  const [subscription, setSubscription] = useState<any>(null);
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [plans, setPlans] = useState<BillingPlan[]>([]);
+  const [subscription, setSubscription] = useState<TenantSubscription | null>(null);
+  const [transactions, setTransactions] = useState<BillingTransaction[]>([]);
   const [subscribingPlanId, setSubscribingPlanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [couponCode, setCouponCode] = useState('');
 
   const loadBillingData = useCallback(async () => {
     if (!activeCompanyId) return;
@@ -36,12 +89,13 @@ export default function TenantBillingPage() {
       // 1. Fetch active plans
       const { data: plansData, error: plansErr } = await supabase
         .from('subscription_plans')
-        .select('*')
+        .select('*, package_features(*)')
         .eq('is_active', true)
-        .order('price', { ascending: true });
+        .eq('is_public', true)
+        .order('monthly_price', { ascending: true });
 
       if (plansErr) throw plansErr;
-      setPlans(plansData || []);
+      setPlans((plansData || []) as BillingPlan[]);
 
       // 2. Fetch active company subscription
       const { data: subData, error: subErr } = await supabase
@@ -51,7 +105,7 @@ export default function TenantBillingPage() {
         .maybeSingle();
 
       if (subErr) throw subErr;
-      setSubscription(subData);
+      setSubscription(subData as TenantSubscription | null);
 
       // 3. Fetch past transactions
       const { data: txData, error: txErr } = await supabase
@@ -61,10 +115,10 @@ export default function TenantBillingPage() {
         .order('created_at', { ascending: false });
 
       if (txErr) throw txErr;
-      setTransactions(txData || []);
-    } catch (err: any) {
+      setTransactions((txData || []) as BillingTransaction[]);
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message || 'Failed to load billing settings.');
+      setError(err instanceof Error ? err.message : 'Failed to load billing settings.');
     } finally {
       setLoading(false);
     }
@@ -88,6 +142,7 @@ export default function TenantBillingPage() {
         body: JSON.stringify({
           companyId: activeCompanyId,
           planId,
+          couponCode: couponCode.trim() || undefined,
         }),
       });
 
@@ -101,9 +156,9 @@ export default function TenantBillingPage() {
       } else {
         throw new Error('No checkout redirect URL received.');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message || 'Checkout failed. Please try again.');
+      setError(err instanceof Error ? err.message : 'Checkout failed. Please try again.');
       setSubscribingPlanId(null);
     }
   }
@@ -118,6 +173,8 @@ export default function TenantBillingPage() {
   }
 
   const activePlanKey = subscription?.subscription_plans?.key || 'none';
+  const billingStatus = subscription?.billing_status || subscription?.status || 'inactive';
+  const daysRemaining = trialDaysRemaining(subscription);
 
   return (
     <div className="space-y-8 max-w-5xl">
@@ -141,8 +198,14 @@ export default function TenantBillingPage() {
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs text-slate-500 font-medium">
               <span className="flex items-center gap-1">
                 <ShieldCheck className="h-3.5 w-3.5 text-green-500" />
-                Status: <span className="capitalize font-bold text-green-600">{subscription?.status || 'inactive'}</span>
+                Billing: <span className="capitalize font-bold text-green-600">{String(billingStatus).replace('_', ' ')}</span>
               </span>
+              {billingStatus === 'trial_active' && (
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5" />
+                  Trial: {daysRemaining} day{daysRemaining === 1 ? '' : 's'} remaining
+                </span>
+              )}
               {subscription?.ends_at && (
                 <span className="flex items-center gap-1">
                   <Calendar className="h-3.5 w-3.5" />
@@ -160,6 +223,18 @@ export default function TenantBillingPage() {
             </p>
           </div>
         )}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <label className="block max-w-md">
+          <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-400">Coupon</span>
+          <input
+            value={couponCode}
+            onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
+            placeholder="Enter coupon code"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold uppercase outline-none focus:ring-2 focus:ring-purple-500"
+          />
+        </label>
       </div>
 
       {/* Pricing Cards Selection */}
@@ -201,32 +276,31 @@ export default function TenantBillingPage() {
 
                     <div className="flex items-baseline gap-1 pt-2">
                       <span className="text-2xl font-black text-slate-900">
-                        {plan.price === 0 ? 'Free' : plan.price.toLocaleString()}
+                        {formatMoney(plan.monthly_price ?? plan.price, plan.currency)}
                       </span>
-                      {plan.price > 0 && (
+                      {(plan.monthly_price ?? plan.price) > 0 && (
                         <span className="text-slate-400 text-xs font-semibold">
-                          {plan.currency} / {plan.billing_interval}
+                          / month
                         </span>
                       )}
                     </div>
+                    <p className="text-xs font-semibold text-slate-400">
+                      Annual: {formatMoney(plan.annual_price, plan.currency)}
+                    </p>
 
                     <ul className="space-y-2.5 pt-4 border-t border-slate-100 text-xs font-semibold text-slate-600">
-                      <li className="flex items-center gap-2">
-                        <Check className="h-4 w-4 text-purple-600" />
-                        Up to {plan.user_limit} Company Users
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <Check className="h-4 w-4 text-purple-600" />
-                        Up to {plan.invoice_limit} Invoices / month
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <Check className="h-4 w-4 text-purple-600" />
-                        Full Invoice & Quotation Modules
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <Check className="h-4 w-4 text-purple-600" />
-                        Online Mobile Money Payments
-                      </li>
+                      {(plan.package_features?.length ? plan.package_features : [
+                        { feature_name: `Up to ${plan.user_limit} Company Users`, enabled: true },
+                        { feature_name: `Up to ${plan.invoice_limit} Invoices / month`, enabled: true },
+                        { feature_name: 'Full Invoice & Quotation Modules', enabled: true },
+                        { feature_name: 'Online Mobile Money Payments', enabled: true },
+                      ]).slice(0, 5).map((feature: PackageFeatureRow) => (
+                        <li key={feature.feature_key || feature.feature_name} className="flex items-center gap-2">
+                          <Check className={`h-4 w-4 ${feature.enabled ? 'text-purple-600' : 'text-slate-300'}`} />
+                          {feature.feature_name}
+                          {feature.limit_value ? ` (${feature.limit_value})` : ''}
+                        </li>
+                      ))}
                     </ul>
                   </div>
 

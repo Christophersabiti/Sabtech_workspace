@@ -47,6 +47,68 @@ async function createUniqueCompany(
   throw new Error('Could not create a unique workspace slug.');
 }
 
+async function startTrialSubscription(
+  adminSupabase: SupabaseClient,
+  companyId: string,
+  requestedPlanKey?: string,
+) {
+  const planKey = requestedPlanKey?.trim().toLowerCase() || 'starter';
+  let { data: plan } = await adminSupabase
+    .from('subscription_plans')
+    .select('id, key, trial_days')
+    .eq('key', planKey)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (!plan) {
+    const fallback = await adminSupabase
+      .from('subscription_plans')
+      .select('id, key, trial_days')
+      .eq('key', 'starter')
+      .maybeSingle();
+    plan = fallback.data;
+  }
+
+  if (!plan) {
+    throw new Error('No active subscription package is available for trial setup.');
+  }
+
+  const startsAt = new Date();
+  const trialDays = Number(plan.trial_days ?? 7);
+  const endsAt = new Date(startsAt);
+  endsAt.setDate(startsAt.getDate() + trialDays);
+
+  const { error } = await adminSupabase
+    .from('company_subscriptions')
+    .upsert({
+      company_id: companyId,
+      plan_id: plan.id,
+      status: 'trialing',
+      billing_status: trialDays > 0 ? 'trial_active' : 'trial_expired',
+      subscription_status: 'trialing',
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+      trial_start_date: startsAt.toISOString(),
+      trial_end_date: endsAt.toISOString(),
+      current_period_start: startsAt.toISOString(),
+      current_period_end: endsAt.toISOString(),
+      payment_provider: 'pesapal',
+      updated_at: startsAt.toISOString(),
+    }, { onConflict: 'company_id' });
+
+  if (error) throw error;
+
+  await adminSupabase
+    .from('companies')
+    .update({ plan: plan.key, updated_at: new Date().toISOString() })
+    .eq('id', companyId);
+
+  return {
+    planKey: plan.key as string,
+    trialEndsAt: endsAt.toISOString(),
+  };
+}
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -162,6 +224,8 @@ export async function POST(req: NextRequest) {
         updated_at: new Date().toISOString(),
       }, { onConflict: 'company_id' });
 
+    const trial = await startTrialSubscription(adminSupabase, company.id, body?.plan);
+
     await adminSupabase
       .from('audit_log')
       .insert({
@@ -174,13 +238,14 @@ export async function POST(req: NextRequest) {
           name: company.name,
           slug: company.slug,
           owner_user_id: appUser.id,
-          plan: body?.plan || 'starter',
+          plan: trial.planKey,
+          trial_end_date: trial.trialEndsAt,
           primary_contact_name: body?.primaryContactName || null,
           primary_contact_email: body?.primaryContactEmail || null,
         },
       });
 
-    return NextResponse.json({ company });
+    return NextResponse.json({ company: { ...company, plan: trial.planKey }, trial });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Could not create workspace.' },

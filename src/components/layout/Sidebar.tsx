@@ -60,6 +60,7 @@ const adminNav = [
 
 const platformNav = [
   { label: 'Platform Admin', href: '/admin/platform', icon: ShieldCheck },
+  { label: 'Packages', href: '/admin/platform/packages', icon: CreditCard },
 ];
 
 type UserInfo = {
@@ -215,7 +216,8 @@ function WorkspaceSwitcher({
   const [logoFailed, setLogoFailed] = useState(false);
   const router = useRouter();
 
-  const showLogo = !!logoUrl && !logoFailed;
+  const fallbackLogoUrl = logoUrl || '/logo.svg';
+  const showLogo = !logoFailed;
   const currentInitial = companyName.charAt(0).toUpperCase();
 
   // close dropdown on outside click
@@ -247,7 +249,7 @@ function WorkspaceSwitcher({
           <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-900 ring-1 ring-white/10 group-hover:ring-white/20 transition-all">
             {showLogo ? (
               <Image
-                src={logoUrl as string}
+                src={fallbackLogoUrl}
                 alt={`${companyName} logo`}
                 width={48}
                 height={48}
@@ -546,7 +548,7 @@ export function SidebarNavContent({
             })}
 
             {user?.appRole === 'super_admin' && platformNav.map(({ label, href, icon }) => {
-              const isActive = pathname.startsWith(href);
+              const isActive = href === '/admin/platform' ? pathname === href : pathname.startsWith(href);
 
               return (
                 <NavItem

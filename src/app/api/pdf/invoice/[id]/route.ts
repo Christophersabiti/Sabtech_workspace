@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { requireTenantEntityAccess } from '@/lib/authz';
+import { EntitlementError, assertFeatureEntitlement } from '@/lib/entitlements';
 
 // ─── Hardcoded fallbacks (used if DB tables not yet created) ─────────────────
 const COMPANY_DEFAULTS = {
@@ -114,7 +115,7 @@ const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" 
   <text x="118" y="132" font-family="Arial Black,Helvetica Neue,sans-serif" font-size="90" font-weight="900" fill="url(#g1)">B</text>
 </svg>`;
 
-async function requireAuth(): Promise<boolean> {
+async function requireAuth(): Promise<string | null> {
   const cookieStore = await cookies();
   const authClient = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -127,14 +128,15 @@ async function requireAuth(): Promise<boolean> {
     }
   );
   const { data: { session } } = await authClient.auth.getSession();
-  return !!session;
+  return session?.user.id ?? null;
 }
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!(await requireAuth())) {
+  const authUserId = await requireAuth();
+  if (!authUserId) {
     return new NextResponse('Unauthorized — please log in to view this document', { status: 401 });
   }
 
@@ -146,6 +148,15 @@ export async function GET(
 
   const isPrint = req.nextUrl.searchParams.get('print') === '1';
   const supabase = getSupabase();
+
+  try {
+    await assertFeatureEntitlement(supabase, authUserId, access.companyId, 'reports.export');
+  } catch (error) {
+    if (error instanceof EntitlementError) {
+      return new NextResponse(error.message, { status: error.status });
+    }
+    throw error;
+  }
 
   // ── Load company settings + payment methods from DB (with fallback) ────────
   const [
