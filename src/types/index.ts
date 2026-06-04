@@ -87,6 +87,10 @@ export type InvoiceSchedule = {
 
 export type InvoiceStatus = 'draft' | 'sent' | 'partially_paid' | 'paid' | 'overdue' | 'cancelled' | 'void';
 
+export type WhtTreatment = 'STANDARD_DEDUCTION' | 'GROSS_UP';
+export type WhtTaxableBaseType = 'SUBTOTAL_EXCL_VAT' | 'TOTAL_INCL_VAT' | 'MANUAL';
+export type UraWhtRemittanceStatus = 'NOT_APPLICABLE' | 'PENDING' | 'REMITTED';
+
 export type Invoice = {
   id: string;
   company_id: string;
@@ -110,6 +114,18 @@ export type Invoice = {
   void_reason: string | null;
   voided_at: string | null;
   voided_by: string | null;
+  // WHT fields
+  apply_wht: boolean;
+  wht_rate: number;
+  wht_treatment: WhtTreatment;
+  wht_taxable_base_type: WhtTaxableBaseType;
+  wht_taxable_amount: number;
+  wht_amount: number;
+  net_payable_amount: number;
+  grossed_up_amount: number | null;
+  ura_wht_remittance_status: UraWhtRemittanceStatus;
+  ura_wht_certificate_number: string | null;
+  ura_wht_remittance_date: string | null;
   created_at: string;
   updated_at: string;
   // Joined
@@ -117,6 +133,41 @@ export type Invoice = {
   project?: Project;
   invoice_items?: InvoiceItem[];
   payments?: Payment[];
+};
+
+export type MigratedInvoice = {
+  id: string;
+  company_id: string;
+  original_invoice_number: string;
+  mapped_invoice_id: string | null;
+  original_issue_date: string;
+  original_due_date: string | null;
+  client_id: string | null;
+  project_id: string | null;
+  currency: string;
+  subtotal: number;
+  vat_amount: number;
+  discount_amount: number;
+  wht_applied: boolean;
+  wht_rate: number | null;
+  wht_amount: number | null;
+  gross_invoice_total: number;
+  amount_paid: number;
+  payment_date: string | null;
+  payment_method: string | null;
+  payment_reference: string | null;
+  original_receipt_number: string | null;
+  wht_certificate_number: string | null;
+  attachment_url: string | null;
+  migration_remarks: string | null;
+  status: string;
+  migrated_by: string | null;
+  migrated_at: string;
+  migration_source: string | null;
+  created_at: string;
+  // Joined
+  client?: { name: string; company_name: string | null } | null;
+  project?: { project_name: string } | null;
 };
 
 export type InvoiceAuditLog = {
@@ -168,6 +219,11 @@ export type Payment = {
   reversal_reason: string | null;
   reversed_at: string | null;
   reversed_by: string | null;
+  // WHT fields
+  wht_withheld: number;
+  actual_received: number | null;
+  wht_certificate_number: string | null;
+  wht_certificate_url: string | null;
   created_at: string;
   // Joined
   invoice?: Invoice;

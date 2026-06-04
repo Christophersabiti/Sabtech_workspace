@@ -5,12 +5,15 @@ import { RateLimitError, assertRateLimit, getRequestIdentity } from '@/lib/rateL
 import { logInvoiceAction, logPaymentAction } from '@/lib/auditLog';
 
 type PaymentBody = {
-  company_id:       string;
-  payment_date:     string;
-  amount_paid:      number;
-  payment_method:   string;
-  reference_number?: string;
-  note?:            string;
+  company_id:              string;
+  payment_date:            string;
+  amount_paid:             number;
+  actual_received?:        number;
+  wht_withheld?:           number;
+  payment_method:          string;
+  reference_number?:       string;
+  note?:                   string;
+  wht_certificate_number?: string;
 };
 
 async function nextPaymentNumber(supabase: Awaited<ReturnType<typeof createClient>>, companyId: string): Promise<string> {
@@ -83,7 +86,7 @@ export async function POST(
   // Verify invoice exists and belongs to the company
   const { data: invoice, error: invErr } = await supabase
     .from('invoices')
-    .select('id, status, balance_due, company_id')
+    .select('id, status, balance_due, company_id, apply_wht')
     .eq('id', invoiceId)
     .eq('company_id', body.company_id)
     .single();
@@ -96,28 +99,44 @@ export async function POST(
     return NextResponse.json({ error: `Cannot record payment on a ${invoice.status} invoice.` }, { status: 409 });
   }
 
+  // balance_due for WHT invoices = net_payable - prior payments (tracked by trigger)
   if (body.amount_paid > invoice.balance_due + 0.01) {
     return NextResponse.json({ error: `Payment amount exceeds balance due (${invoice.balance_due}).` }, { status: 422 });
   }
+
+  const whtWithheld = body.wht_withheld ?? 0;
+  const actualReceived = body.actual_received ?? body.amount_paid;
 
   const paymentNumber = await nextPaymentNumber(supabase, body.company_id);
 
   const { data: payment, error: payErr } = await supabase
     .from('payments')
     .insert({
-      company_id:       body.company_id,
-      payment_number:   paymentNumber,
-      invoice_id:       invoiceId,
-      payment_date:     body.payment_date,
-      amount_paid:      body.amount_paid,
-      payment_method:   body.payment_method,
-      reference_number: body.reference_number?.trim() || null,
-      note:             body.note?.trim() || null,
-      is_confirmed:     true,
-      status:           'confirmed',
+      company_id:              body.company_id,
+      payment_number:          paymentNumber,
+      invoice_id:              invoiceId,
+      payment_date:            body.payment_date,
+      amount_paid:             body.amount_paid,
+      actual_received:         actualReceived,
+      wht_withheld:            whtWithheld,
+      payment_method:          body.payment_method,
+      reference_number:        body.reference_number?.trim() || null,
+      note:                    body.note?.trim() || null,
+      wht_certificate_number:  body.wht_certificate_number?.trim() || null,
+      is_confirmed:            true,
+      status:                  'confirmed',
     })
     .select('id')
     .single();
+
+  // If WHT certificate number is provided, update the invoice's URA certificate field
+  if (!payErr && payment && body.wht_certificate_number?.trim()) {
+    await supabase
+      .from('invoices')
+      .update({ ura_wht_certificate_number: body.wht_certificate_number.trim() })
+      .eq('id', invoiceId)
+      .eq('company_id', body.company_id);
+  }
 
   if (payErr || !payment) {
     return NextResponse.json({ error: payErr?.message ?? 'Failed to record payment.' }, { status: 500 });

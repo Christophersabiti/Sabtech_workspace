@@ -69,8 +69,39 @@ function exportClientsCSV(clientRows: { name: string; billed: number; paid: numb
   URL.revokeObjectURL(a.href);
 }
 
+function exportWhtCSV(rows: WhtRow[]) {
+  const headers = ['Invoice #', 'Client', 'Date', 'Gross Total', 'WHT Rate %', 'WHT Amount', 'Net Payable', 'URA Status', 'Certificate #'];
+  const data = rows.map(r => [
+    r.invoice_number, r.client_name, r.issue_date,
+    r.gross_total, r.wht_rate, r.wht_amount,
+    r.net_payable, r.ura_status, r.certificate_number ?? '',
+  ]);
+  const csv = [headers, ...data]
+    .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+    download: `wht-report-${new Date().toISOString().slice(0, 10)}.csv`,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 type InvoiceRow = Invoice & { client: { name: string } | null; project: { project_name: string } | null };
-type Tab = 'overview' | 'invoices' | 'payments' | 'clients';
+type Tab = 'overview' | 'invoices' | 'payments' | 'clients' | 'wht';
+type WhtRow = {
+  id: string;
+  invoice_number: string;
+  client_name: string;
+  issue_date: string;
+  gross_total: number;
+  wht_rate: number;
+  wht_amount: number;
+  net_payable: number;
+  ura_status: string;
+  certificate_number: string | null;
+  currency: string;
+};
 
 export default function ReportsPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -145,11 +176,31 @@ export default function ReportsPage() {
   });
   const clientRows = Object.values(clientMap).sort((a, b) => b.billed - a.billed);
 
+  // WHT aggregates
+  const whtInvoices = activeInvoices.filter(i => i.apply_wht);
+  const whtRows: WhtRow[] = whtInvoices.map(i => ({
+    id: i.id,
+    invoice_number: i.invoice_number,
+    client_name: i.client?.name ?? '—',
+    issue_date: i.issue_date,
+    gross_total: i.total_amount,
+    wht_rate: i.wht_rate,
+    wht_amount: i.wht_amount,
+    net_payable: i.net_payable_amount,
+    ura_status: i.ura_wht_remittance_status,
+    certificate_number: i.ura_wht_certificate_number,
+    currency: i.currency,
+  }));
+  const totalWhtWithheld = whtRows.reduce((s, r) => s + r.wht_amount, 0);
+  const totalWhtPending  = whtRows.filter(r => r.ura_status === 'PENDING').reduce((s, r) => s + r.wht_amount, 0);
+  const totalWhtRemitted = whtRows.filter(r => r.ura_status === 'REMITTED').reduce((s, r) => s + r.wht_amount, 0);
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview',  label: 'Overview' },
     { id: 'invoices',  label: `Invoices (${invoices.length})` },
     { id: 'payments',  label: `Payments (${payments.length})` },
     { id: 'clients',   label: 'By Client' },
+    { id: 'wht',       label: `WHT (${whtRows.length})` },
   ];
 
   return (
@@ -387,7 +438,7 @@ export default function ReportsPage() {
             ))}
           </div>
         </div>
-      ) : (
+      ) : tab === 'clients' ? (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
           <div className="flex justify-end px-4 py-2 border-b border-slate-100">
             <button
@@ -431,6 +482,113 @@ export default function ReportsPage() {
               </div>
             ))}
           </div>
+        </div>
+      ) : (
+        /* WHT TAB */
+        <div className="space-y-6">
+          {/* WHT KPI summary */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {[
+              { label: 'Total WHT Withheld',  value: formatCurrency(totalWhtWithheld), cls: 'border-t-amber-500' },
+              { label: 'Pending URA Remittance', value: formatCurrency(totalWhtPending), cls: 'border-t-red-500' },
+              { label: 'Remitted to URA',      value: formatCurrency(totalWhtRemitted), cls: 'border-t-green-500' },
+            ].map(({ label, value, cls }) => (
+              <div key={label} className={`bg-white border border-slate-200 border-t-4 ${cls} rounded-xl p-4 shadow-sm`}>
+                <p className="text-xs font-medium text-slate-500 mb-1">{label}</p>
+                <p className="text-xl font-bold text-slate-900">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* WHT table */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+              <p className="text-sm font-semibold text-slate-700 uppercase tracking-wide">WHT Invoices</p>
+              <button
+                onClick={() => exportWhtCSV(whtRows)}
+                disabled={whtRows.length === 0}
+                className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 disabled:opacity-40"
+              >
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    {['Invoice #', 'Client', 'Date', 'Gross Total', 'WHT Rate', 'WHT Amount', 'Net Payable', 'URA Status', 'Certificate #'].map(h => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {whtRows.length === 0 ? (
+                    <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400">No WHT invoices in this period</td></tr>
+                  ) : whtRows.map(row => (
+                    <tr key={row.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-mono text-xs">{row.invoice_number}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{row.client_name}</td>
+                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(row.issue_date)}</td>
+                      <td className="px-4 py-3 font-semibold">{formatCurrency(row.gross_total, row.currency)}</td>
+                      <td className="px-4 py-3 text-slate-600">{row.wht_rate}%</td>
+                      <td className="px-4 py-3 font-semibold text-red-700">{formatCurrency(row.wht_amount, row.currency)}</td>
+                      <td className="px-4 py-3 font-semibold text-green-700">{formatCurrency(row.net_payable, row.currency)}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                          row.ura_status === 'REMITTED'
+                            ? 'bg-green-100 text-green-700'
+                            : row.ura_status === 'PENDING'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {row.ura_status === 'REMITTED' ? 'Remitted' : row.ura_status === 'PENDING' ? 'Pending' : 'N/A'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{row.certificate_number || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* WHT by client */}
+          {whtRows.length > 0 && (() => {
+            const byClient: Record<string, { name: string; wht: number; pending: number; remitted: number }> = {};
+            whtRows.forEach(r => {
+              if (!byClient[r.client_name]) byClient[r.client_name] = { name: r.client_name, wht: 0, pending: 0, remitted: 0 };
+              byClient[r.client_name].wht += r.wht_amount;
+              if (r.ura_status === 'PENDING')  byClient[r.client_name].pending  += r.wht_amount;
+              if (r.ura_status === 'REMITTED') byClient[r.client_name].remitted += r.wht_amount;
+            });
+            const rows2 = Object.values(byClient).sort((a, b) => b.wht - a.wht);
+            return (
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                <div className="px-4 py-3 border-b border-slate-100">
+                  <p className="text-sm font-semibold text-slate-700 uppercase tracking-wide">WHT by Client</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                      <tr>{['Client', 'Total WHT', 'Pending Remittance', 'Remitted to URA'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rows2.map(r => (
+                        <tr key={r.name} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 font-medium text-slate-900">{r.name}</td>
+                          <td className="px-4 py-3 font-semibold">{formatCurrency(r.wht)}</td>
+                          <td className="px-4 py-3 text-amber-700 font-medium">{formatCurrency(r.pending)}</td>
+                          <td className="px-4 py-3 text-green-700 font-medium">{formatCurrency(r.remitted)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

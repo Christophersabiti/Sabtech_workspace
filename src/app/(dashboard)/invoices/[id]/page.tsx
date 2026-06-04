@@ -21,6 +21,15 @@ import {
 const PAYMENT_METHODS = ['bank_transfer', 'mobile_money', 'cash', 'cheque', 'online', 'other'] as const;
 
 type Toast = { msg: string; ok: boolean };
+type PayFormState = {
+  actual_received: string;
+  wht_withheld: string;
+  payment_date: string;
+  payment_method: typeof PAYMENT_METHODS[number];
+  reference_number: string;
+  note: string;
+  wht_certificate_number: string;
+};
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -38,12 +47,14 @@ export default function InvoiceDetailPage() {
 
   // Payment modal state
   const [showPayModal, setShowPayModal] = useState(false);
-  const [payForm, setPayForm] = useState({
-    amount_paid:      '',
-    payment_date:     new Date().toISOString().split('T')[0],
-    payment_method:   'bank_transfer' as typeof PAYMENT_METHODS[number],
-    reference_number: '',
-    note:             '',
+  const [payForm, setPayForm] = useState<PayFormState>({
+    actual_received:       '',
+    wht_withheld:          '',
+    payment_date:          new Date().toISOString().split('T')[0],
+    payment_method:        'bank_transfer',
+    reference_number:      '',
+    note:                  '',
+    wht_certificate_number: '',
   });
   const [savingPay, setSavingPay] = useState(false);
 
@@ -106,20 +117,26 @@ export default function InvoiceDetailPage() {
   async function recordPayment(e: React.FormEvent) {
     e.preventDefault();
     if (!invoice) return;
-    const amount = parseFloat(payForm.amount_paid);
-    if (!amount || amount <= 0) return;
+    const actualReceived = parseFloat(payForm.actual_received);
+    const whtWithheld = parseFloat(payForm.wht_withheld) || 0;
+    if (!actualReceived || actualReceived <= 0) return;
+    // amount_paid = actual_received; WHT withheld is tracked separately for URA reporting
+    // The trigger reconciles balance as: net_payable_amount - sum(amount_paid)
     setSavingPay(true);
 
     const res = await fetch(`/api/invoices/${id}/payments`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
-        company_id:       invoice.company_id,
-        payment_date:     payForm.payment_date,
-        amount_paid:      amount,
-        payment_method:   payForm.payment_method,
-        reference_number: payForm.reference_number,
-        note:             payForm.note,
+        company_id:             invoice.company_id,
+        payment_date:           payForm.payment_date,
+        amount_paid:            actualReceived,
+        actual_received:        actualReceived,
+        wht_withheld:           whtWithheld,
+        payment_method:         payForm.payment_method,
+        reference_number:       payForm.reference_number,
+        note:                   payForm.note,
+        wht_certificate_number: payForm.wht_certificate_number || null,
       }),
     });
 
@@ -128,8 +145,10 @@ export default function InvoiceDetailPage() {
     if (res.ok && data.ok) {
       setShowPayModal(false);
       setPayForm({
-        amount_paid: '', payment_date: new Date().toISOString().split('T')[0],
+        actual_received: '', wht_withheld: '',
+        payment_date: new Date().toISOString().split('T')[0],
         payment_method: 'bank_transfer', reference_number: '', note: '',
+        wht_certificate_number: '',
       });
       showToast('Payment recorded successfully.', true);
       await load();
@@ -435,14 +454,61 @@ export default function InvoiceDetailPage() {
               )}
               {invoice.tax_amount > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Tax</span>
+                  <span className="text-slate-500">VAT / Tax</span>
                   <span className="font-medium">{formatCurrency(invoice.tax_amount, invoice.currency)}</span>
                 </div>
               )}
-              <div className="border-t border-slate-200 pt-3 flex justify-between">
-                <span className="font-semibold text-slate-900">Invoice Total</span>
-                <span className="font-bold text-slate-900">{formatCurrency(invoice.total_amount, invoice.currency)}</span>
-              </div>
+              {invoice.apply_wht && (
+                <>
+                  <div className="border-t border-dashed border-slate-200 pt-3 flex justify-between">
+                    <span className="font-semibold text-slate-900">
+                      {invoice.wht_treatment === 'GROSS_UP' ? 'Gross Invoice Total' : 'Invoice Total'}
+                    </span>
+                    <span className="font-bold text-slate-900">{formatCurrency(invoice.total_amount, invoice.currency)}</span>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                    <p className="text-xs font-bold text-amber-700 uppercase tracking-wide">Withholding Tax</p>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-600">WHT Rate</span>
+                      <span className="font-medium">{invoice.wht_rate}%</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-600">Taxable Base</span>
+                      <span className="font-medium">{formatCurrency(invoice.wht_taxable_amount, invoice.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-600">WHT Amount</span>
+                      <span className="font-semibold text-red-600">- {formatCurrency(invoice.wht_amount, invoice.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs font-semibold border-t border-amber-200 pt-2">
+                      <span className="text-amber-700">Remit to URA</span>
+                      <span className="text-amber-700">{formatCurrency(invoice.wht_amount, invoice.currency)}</span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between rounded-lg bg-green-50 px-3 py-2">
+                    <span className="font-semibold text-green-800">Net Payable to Supplier</span>
+                    <span className="font-bold text-green-700">{formatCurrency(invoice.net_payable_amount, invoice.currency)}</span>
+                  </div>
+                  {invoice.ura_wht_remittance_status !== 'NOT_APPLICABLE' && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-500">URA Remittance Status</span>
+                      <span className={`font-semibold px-2 py-0.5 rounded-full text-xs ${
+                        invoice.ura_wht_remittance_status === 'REMITTED'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {invoice.ura_wht_remittance_status === 'REMITTED' ? 'Remitted' : 'Pending'}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+              {!invoice.apply_wht && (
+                <div className="border-t border-slate-200 pt-3 flex justify-between">
+                  <span className="font-semibold text-slate-900">Invoice Total</span>
+                  <span className="font-bold text-slate-900">{formatCurrency(invoice.total_amount, invoice.currency)}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-green-600 font-medium">Amount Paid</span>
                 <span className="font-bold text-green-700">{formatCurrency(invoice.total_paid, invoice.currency)}</span>
@@ -510,20 +576,64 @@ export default function InvoiceDetailPage() {
       <Modal open={showPayModal} onClose={() => setShowPayModal(false)} title="Record Payment" maxWidth="md">
         <div className="px-6 py-3 bg-slate-50 border-b border-slate-200">
           <p className="text-xs text-slate-500">Invoice <span className="font-mono font-medium">{invoice.invoice_number}</span></p>
-          <p className="text-sm font-medium text-slate-700">Balance Due: <span className="text-amber-700">{formatCurrency(invoice.balance_due, invoice.currency)}</span></p>
+          {invoice.apply_wht ? (
+            <div className="space-y-0.5 mt-1">
+              <p className="text-sm font-medium text-slate-700">Gross Total: <span className="text-slate-900">{formatCurrency(invoice.total_amount, invoice.currency)}</span></p>
+              <p className="text-sm font-medium text-slate-700">WHT ({invoice.wht_rate}%): <span className="text-red-600">- {formatCurrency(invoice.wht_amount, invoice.currency)}</span></p>
+              <p className="text-sm font-medium text-slate-700">Net Payable: <span className="text-amber-700">{formatCurrency(invoice.net_payable_amount, invoice.currency)}</span></p>
+            </div>
+          ) : (
+            <p className="text-sm font-medium text-slate-700">Balance Due: <span className="text-amber-700">{formatCurrency(invoice.balance_due, invoice.currency)}</span></p>
+          )}
         </div>
         <form onSubmit={recordPayment} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Amount Received *</label>
-            <input
-              required type="number" min="0.01" step="0.01" max={invoice.balance_due}
-              value={payForm.amount_paid}
-              onChange={e => setPayForm(f => ({ ...f, amount_paid: e.target.value }))}
-              placeholder={`Max: ${invoice.balance_due}`}
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              autoFocus
-            />
-          </div>
+          {invoice.apply_wht ? (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Amount Received by Supplier *</label>
+                  <input
+                    required type="number" min="0.01" step="0.01"
+                    value={payForm.actual_received}
+                    onChange={e => setPayForm(f => ({ ...f, actual_received: e.target.value }))}
+                    placeholder={`Net: ${invoice.net_payable_amount}`}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">WHT Withheld (for URA)</label>
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={payForm.wht_withheld}
+                    onChange={e => setPayForm(f => ({ ...f, wht_withheld: e.target.value }))}
+                    placeholder={String(invoice.wht_amount)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+              </div>
+              {payForm.actual_received && (
+                <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700">
+                  Client total disbursement (cash + WHT): {formatCurrency(
+                    (parseFloat(payForm.actual_received) || 0) + (parseFloat(payForm.wht_withheld) || 0),
+                    invoice.currency
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Amount Received *</label>
+              <input
+                required type="number" min="0.01" step="0.01" max={invoice.balance_due}
+                value={payForm.actual_received}
+                onChange={e => setPayForm(f => ({ ...f, actual_received: e.target.value }))}
+                placeholder={`Max: ${invoice.balance_due}`}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                autoFocus
+              />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Payment Date</label>
@@ -553,6 +663,17 @@ export default function InvoiceDetailPage() {
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
             />
           </div>
+          {invoice.apply_wht && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">WHT Certificate Number</label>
+              <input
+                type="text" value={payForm.wht_certificate_number}
+                onChange={e => setPayForm(f => ({ ...f, wht_certificate_number: e.target.value }))}
+                placeholder="Certificate # from URA (optional)"
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Note</label>
             <textarea

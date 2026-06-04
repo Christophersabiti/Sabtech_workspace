@@ -107,6 +107,12 @@ export default function InvoicesPage() {
               <Download className="h-4 w-4" /> Export
             </button>
             <Link
+              href="/invoices/migrate"
+              className="inline-flex items-center gap-2 border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm px-3 py-2 rounded-lg"
+            >
+              <FileText className="h-4 w-4" /> Import Historical
+            </Link>
+            <Link
               href="/invoices/new"
               className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
             >

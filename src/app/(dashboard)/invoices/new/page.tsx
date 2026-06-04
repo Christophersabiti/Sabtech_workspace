@@ -6,8 +6,9 @@ import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { useEntitlements } from '@/hooks/useEntitlements';
 import { FeatureBlockedState } from '@/components/billing/FeatureBlockedState';
-import { Client, InvoiceSchedule, Project, Service } from '@/types';
+import { Client, InvoiceSchedule, Project, Service, WhtTreatment, WhtTaxableBaseType } from '@/types';
 import { formatCurrency, calculateLineTotal } from '@/lib/utils';
+import { computeWHT, WHT_TREATMENT_LABELS, WHT_BASE_LABELS } from '@/lib/whtUtils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Plus, Trash2, ArrowLeft } from 'lucide-react';
 
@@ -73,6 +74,15 @@ function NewInvoiceForm() {
   }]);
 
   const [discountAmount, setDiscountAmount] = useState(0);
+
+  // WHT state
+  const [whtSettings, setWhtSettings] = useState({
+    apply_wht: false,
+    wht_rate: 6,
+    wht_treatment: 'STANDARD_DEDUCTION' as WhtTreatment,
+    wht_taxable_base_type: 'SUBTOTAL_EXCL_VAT' as WhtTaxableBaseType,
+    wht_manual_amount: 0,
+  });
 
   // Generate next invoice number by querying the highest existing one for this year
   const fetchNextInvoiceNumber = useCallback(async (): Promise<string> => {
@@ -270,7 +280,21 @@ function NewInvoiceForm() {
     const lineNet = calculateLineTotal(item.quantity, item.unit_price, item.discount_percent);
     return s + lineNet * (item.tax_percent / 100);
   }, 0);
-  const totalAmount = subtotal - discountAmount + taxTotal;
+  const baseTotal = subtotal - discountAmount + taxTotal;
+
+  const whtResult = whtSettings.apply_wht
+    ? computeWHT({
+        treatment: whtSettings.wht_treatment,
+        rate: whtSettings.wht_rate,
+        taxableBaseType: whtSettings.wht_taxable_base_type,
+        subtotalExclVat: subtotal - discountAmount,
+        totalInclVat: baseTotal,
+        manualAmount: whtSettings.wht_manual_amount,
+      })
+    : null;
+
+  // For GROSS_UP, invoice face value = grossed-up amount; for others, it's the base total
+  const totalAmount = whtResult?.grossedUpAmount ?? baseTotal;
 
   async function handleSave(status: 'draft' | 'sent') {
     if (companyLoading) return;
@@ -286,6 +310,7 @@ function NewInvoiceForm() {
     setInvoiceNumber(freshNumber);
 
     async function attemptInsert(invNum: string) {
+      const netPayable = whtResult ? whtResult.netPayable : totalAmount;
       return supabase.from('invoices').insert({
         company_id: activeCompanyId,
         invoice_number: invNum,
@@ -300,10 +325,20 @@ function NewInvoiceForm() {
         tax_amount: taxTotal,
         total_amount: totalAmount,
         total_paid: 0,
-        balance_due: totalAmount,
+        balance_due: netPayable,
         status,
         notes: header.notes || null,
         footer_note: header.footer_note || null,
+        // WHT fields
+        apply_wht: whtSettings.apply_wht,
+        wht_rate: whtSettings.wht_rate,
+        wht_treatment: whtSettings.wht_treatment,
+        wht_taxable_base_type: whtSettings.wht_taxable_base_type,
+        wht_taxable_amount: whtResult?.taxableBase ?? 0,
+        wht_amount: whtResult?.whtAmount ?? 0,
+        net_payable_amount: netPayable,
+        grossed_up_amount: whtResult?.grossedUpAmount ?? null,
+        ura_wht_remittance_status: whtSettings.apply_wht ? 'PENDING' : 'NOT_APPLICABLE',
       }).select().single();
     }
 
@@ -543,6 +578,100 @@ function NewInvoiceForm() {
             </div>
           </div>
 
+          {/* Withholding Tax */}
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Withholding Tax (WHT)</h2>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-sm text-slate-600">Apply WHT</span>
+                <div
+                  role="checkbox"
+                  aria-checked={whtSettings.apply_wht}
+                  tabIndex={0}
+                  onClick={() => setWhtSettings(s => ({ ...s, apply_wht: !s.apply_wht }))}
+                  onKeyDown={e => e.key === ' ' && setWhtSettings(s => ({ ...s, apply_wht: !s.apply_wht }))}
+                  className={`w-10 h-5 rounded-full cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${whtSettings.apply_wht ? 'bg-blue-600' : 'bg-slate-300'}`}
+                >
+                  <div className={`w-4 h-4 bg-white rounded-full mt-0.5 shadow transition-transform ${whtSettings.apply_wht ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                </div>
+              </label>
+            </div>
+
+            {whtSettings.apply_wht && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">WHT Rate (%)</label>
+                  <input
+                    type="number" min="0" max="100" step="0.01"
+                    value={whtSettings.wht_rate}
+                    onChange={e => setWhtSettings(s => ({ ...s, wht_rate: parseFloat(e.target.value) || 0 }))}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">WHT Treatment</label>
+                  <select
+                    value={whtSettings.wht_treatment}
+                    onChange={e => setWhtSettings(s => ({ ...s, wht_treatment: e.target.value as WhtTreatment }))}
+                    className={inputCls}
+                  >
+                    {(Object.keys(WHT_TREATMENT_LABELS) as WhtTreatment[]).map(k => (
+                      <option key={k} value={k}>{WHT_TREATMENT_LABELS[k]}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Taxable Base</label>
+                  <select
+                    value={whtSettings.wht_taxable_base_type}
+                    onChange={e => setWhtSettings(s => ({ ...s, wht_taxable_base_type: e.target.value as WhtTaxableBaseType }))}
+                    className={inputCls}
+                  >
+                    {(Object.keys(WHT_BASE_LABELS) as WhtTaxableBaseType[]).map(k => (
+                      <option key={k} value={k}>{WHT_BASE_LABELS[k]}</option>
+                    ))}
+                  </select>
+                </div>
+                {whtSettings.wht_taxable_base_type === 'MANUAL' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Manual Taxable Amount</label>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={whtSettings.wht_manual_amount}
+                      onChange={e => setWhtSettings(s => ({ ...s, wht_manual_amount: parseFloat(e.target.value) || 0 }))}
+                      className={inputCls}
+                    />
+                  </div>
+                )}
+                {whtResult && (
+                  <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm space-y-1">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Taxable Base</span>
+                      <span>{formatCurrency(whtResult.taxableBase, header.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>WHT @ {whtSettings.wht_rate}%</span>
+                      <span className="text-red-600">- {formatCurrency(whtResult.whtAmount, header.currency)}</span>
+                    </div>
+                    {whtResult.grossedUpAmount && (
+                      <div className="flex justify-between text-slate-600">
+                        <span>Grossed-up Invoice Total</span>
+                        <span className="font-semibold">{formatCurrency(whtResult.grossedUpAmount, header.currency)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-semibold text-slate-800 border-t border-amber-200 pt-1 mt-1">
+                      <span>Net Payable to Supplier</span>
+                      <span className="text-green-700">{formatCurrency(whtResult.netPayable, header.currency)}</span>
+                    </div>
+                    <p className="text-xs text-amber-700 mt-1">
+                      WHT amount of {formatCurrency(whtResult.whtAmount, header.currency)} to be remitted to URA.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Notes */}
           <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
             <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Notes & Footer</h2>
@@ -588,14 +717,46 @@ function NewInvoiceForm() {
                   className="border border-slate-200 rounded px-2 py-1 text-xs w-28 text-right focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Tax</span>
-                <span className="font-medium">{formatCurrency(taxTotal, header.currency)}</span>
-              </div>
+              {taxTotal > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">VAT / Tax</span>
+                  <span className="font-medium">{formatCurrency(taxTotal, header.currency)}</span>
+                </div>
+              )}
+              {whtResult && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">WHT Rate</span>
+                    <span className="font-medium">{whtSettings.wht_rate}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">WHT Amount</span>
+                    <span className="font-medium text-red-600">- {formatCurrency(whtResult.whtAmount, header.currency)}</span>
+                  </div>
+                  {whtResult.grossedUpAmount && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Gross Invoice Total</span>
+                      <span className="font-medium">{formatCurrency(whtResult.grossedUpAmount, header.currency)}</span>
+                    </div>
+                  )}
+                </>
+              )}
               <div className="border-t border-slate-200 pt-3 flex justify-between">
-                <span className="font-semibold text-slate-900">Total</span>
+                <span className="font-semibold text-slate-900">{whtResult ? 'Gross Invoice Total' : 'Total'}</span>
                 <span className="text-lg font-bold text-slate-900">{formatCurrency(totalAmount, header.currency)}</span>
               </div>
+              {whtResult && (
+                <div className="flex justify-between rounded-lg bg-green-50 px-3 py-2">
+                  <span className="font-semibold text-green-800">Net Payable to Supplier</span>
+                  <span className="font-bold text-green-700">{formatCurrency(whtResult.netPayable, header.currency)}</span>
+                </div>
+              )}
+              {whtResult && (
+                <div className="flex justify-between rounded-lg bg-amber-50 px-3 py-2">
+                  <span className="text-amber-700 font-medium">Remit to URA</span>
+                  <span className="font-bold text-amber-700">{formatCurrency(whtResult.whtAmount, header.currency)}</span>
+                </div>
+              )}
             </div>
 
             <div className="mt-6 space-y-3">
