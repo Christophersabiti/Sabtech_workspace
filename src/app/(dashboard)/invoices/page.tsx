@@ -12,7 +12,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Plus, Search, FileText, TrendingUp, CheckCircle, AlertCircle, Download } from 'lucide-react';
 
-const ALL_STATUSES = ['draft', 'sent', 'partially_paid', 'paid', 'overdue', 'cancelled', 'void'] as const;
+const ALL_STATUSES = ['draft', 'sent', 'partially_paid', 'paid', 'overdue', 'cancelled', 'void', 'migrated'] as const;
 
 type InvoiceRow = Invoice & { client: { name: string }; project: { project_name: string } | null };
 

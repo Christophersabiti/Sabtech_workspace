@@ -85,7 +85,7 @@ export type InvoiceSchedule = {
   created_at: string;
 };
 
-export type InvoiceStatus = 'draft' | 'sent' | 'partially_paid' | 'paid' | 'overdue' | 'cancelled' | 'void';
+export type InvoiceStatus = 'draft' | 'sent' | 'partially_paid' | 'paid' | 'overdue' | 'cancelled' | 'void' | 'migrated';
 
 export type WhtTreatment = 'STANDARD_DEDUCTION' | 'GROSS_UP';
 export type WhtTaxableBaseType = 'SUBTOTAL_EXCL_VAT' | 'TOTAL_INCL_VAT' | 'MANUAL';
@@ -114,6 +114,11 @@ export type Invoice = {
   void_reason: string | null;
   voided_at: string | null;
   voided_by: string | null;
+  // Migration provenance
+  migrated_by: string | null;
+  migrated_at: string | null;
+  migration_source: string | null;
+  migrated_record_id: string | null;
   // WHT fields
   apply_wht: boolean;
   wht_rate: number;

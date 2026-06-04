@@ -121,48 +121,155 @@ export default function MigrateInvoicesPage() {
 
   async function handleSave() {
     if (!activeCompanyId) return;
-    const validRows = rows.filter(r => r.original_invoice_number.trim() && r.original_issue_date);
+    const validRows = rows.filter(r => r.original_invoice_number.trim() && r.original_issue_date && r.client_id);
     if (validRows.length === 0) {
-      setError('At least one row with an invoice number and issue date is required.');
+      setError('At least one row with an invoice number, issue date, and client is required.');
       return;
     }
     setSaving(true);
     setError(null);
 
     const { data: { user } } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
 
-    const inserts = validRows.map(r => ({
-      company_id:              activeCompanyId,
-      original_invoice_number: r.original_invoice_number.trim(),
-      original_issue_date:     r.original_issue_date,
-      original_due_date:       r.original_due_date || null,
-      client_id:               r.client_id || null,
-      project_id:              r.project_id || null,
-      currency:                r.currency,
-      subtotal:                parseFloat(r.subtotal) || 0,
-      vat_amount:              parseFloat(r.vat_amount) || 0,
-      discount_amount:         parseFloat(r.discount_amount) || 0,
-      wht_applied:             r.wht_applied,
-      wht_rate:                r.wht_applied ? (parseFloat(r.wht_rate) || 0) : null,
-      wht_amount:              r.wht_applied ? (parseFloat(r.wht_amount) || 0) : null,
-      gross_invoice_total:     parseFloat(r.gross_invoice_total) || 0,
-      amount_paid:             parseFloat(r.amount_paid) || 0,
-      payment_date:            r.payment_date || null,
-      payment_method:          r.payment_method || null,
-      payment_reference:       r.payment_reference || null,
-      original_receipt_number: r.original_receipt_number || null,
-      wht_certificate_number:  r.wht_certificate_number || null,
-      migration_remarks:       r.migration_remarks || null,
-      migration_source:        r.migration_source || 'manual_migration',
-      migrated_by:             user?.id ?? null,
-      status:                  'MIGRATED',
-    }));
+    for (const r of validRows) {
+      const subtotal     = parseFloat(r.subtotal)            || 0;
+      const vatAmount    = parseFloat(r.vat_amount)          || 0;
+      const discAmount   = parseFloat(r.discount_amount)     || 0;
+      const grossTotal   = parseFloat(r.gross_invoice_total) || (subtotal + vatAmount - discAmount);
+      const amountPaid   = parseFloat(r.amount_paid)         || 0;
+      const whtRate      = r.wht_applied ? (parseFloat(r.wht_rate)   || 0) : 0;
+      const whtAmt       = r.wht_applied ? (parseFloat(r.wht_amount) || 0) : 0;
+      const netPayable   = r.wht_applied ? grossTotal - whtAmt : grossTotal;
+      const balanceDue   = netPayable - amountPaid;
 
-    const { error: insErr } = await supabase.from('migrated_invoices').insert(inserts);
-    if (insErr) {
-      setError(insErr.message);
-      setSaving(false);
-      return;
+      // 1. Insert into main invoices table so it shows in UI and client summaries
+      const { data: inv, error: invErr } = await supabase
+        .from('invoices')
+        .insert({
+          company_id:                  activeCompanyId,
+          invoice_number:              r.original_invoice_number.trim(),
+          client_id:                   r.client_id,
+          project_id:                  r.project_id || null,
+          issue_date:                  r.original_issue_date,
+          due_date:                    r.original_due_date || null,
+          currency:                    r.currency,
+          subtotal,
+          discount_amount:             discAmount,
+          tax_amount:                  vatAmount,
+          total_amount:                grossTotal,
+          total_paid:                  amountPaid,
+          balance_due:                 balanceDue,
+          status:                      'migrated',
+          notes:                       r.migration_remarks || null,
+          // WHT
+          apply_wht:                   r.wht_applied,
+          wht_rate:                    whtRate,
+          wht_treatment:               'STANDARD_DEDUCTION',
+          wht_taxable_base_type:       'SUBTOTAL_EXCL_VAT',
+          wht_taxable_amount:          r.wht_applied ? subtotal : 0,
+          wht_amount:                  whtAmt,
+          net_payable_amount:          netPayable,
+          ura_wht_remittance_status:   r.wht_applied ? 'PENDING' : 'NOT_APPLICABLE',
+          ura_wht_certificate_number:  r.wht_certificate_number || null,
+          // Migration provenance
+          migrated_by:                 user?.id ?? null,
+          migrated_at:                 now,
+          migration_source:            r.migration_source || 'manual_migration',
+        })
+        .select('id')
+        .single();
+
+      if (invErr || !inv) {
+        setError(`Row "${r.original_invoice_number}": ${invErr?.message ?? 'Failed to create invoice'}`);
+        setSaving(false);
+        return;
+      }
+
+      // 2. Insert a single line item so the invoice is complete
+      await supabase.from('invoice_items').insert({
+        company_id:      activeCompanyId,
+        invoice_id:      inv.id,
+        item_name:       `Historical Invoice — ${r.original_invoice_number.trim()}`,
+        description:     r.migration_remarks || null,
+        quantity:        1,
+        unit_price:      subtotal,
+        discount_percent: discAmount > 0 && subtotal > 0 ? (discAmount / subtotal) * 100 : 0,
+        tax_percent:     subtotal > 0 ? (vatAmount / subtotal) * 100 : 0,
+        line_total:      subtotal,
+        sort_order:      0,
+      });
+
+      // 3. Insert payment record if amount was paid
+      if (amountPaid > 0 && r.payment_date) {
+        // Generate payment number
+        const year   = new Date(r.payment_date).getFullYear();
+        const prefix = `RCP-${year}-`;
+        const { data: latest } = await supabase
+          .from('payments')
+          .select('payment_number')
+          .eq('company_id', activeCompanyId)
+          .like('payment_number', `${prefix}%`)
+          .order('payment_number', { ascending: false })
+          .limit(1);
+        let nextNum = 1;
+        if (latest && latest.length > 0) {
+          const parsed = parseInt(latest[0].payment_number.replace(prefix, ''), 10);
+          if (!isNaN(parsed)) nextNum = parsed + 1;
+        }
+        const paymentNumber = `${prefix}${String(nextNum).padStart(4, '0')}`;
+
+        await supabase.from('payments').insert({
+          company_id:              activeCompanyId,
+          payment_number:          r.original_receipt_number?.trim() || paymentNumber,
+          invoice_id:              inv.id,
+          payment_date:            r.payment_date,
+          amount_paid:             amountPaid,
+          actual_received:         amountPaid,
+          wht_withheld:            whtAmt,
+          payment_method:          r.payment_method || 'bank_transfer',
+          reference_number:        r.payment_reference || null,
+          wht_certificate_number:  r.wht_certificate_number || null,
+          note:                    'Imported historical payment',
+          is_confirmed:            true,
+          status:                  'confirmed',
+        });
+      }
+
+      // 4. Save audit record in migrated_invoices with link back to the invoice
+      await supabase.from('migrated_invoices').insert({
+        company_id:              activeCompanyId,
+        original_invoice_number: r.original_invoice_number.trim(),
+        mapped_invoice_id:       inv.id,
+        original_issue_date:     r.original_issue_date,
+        original_due_date:       r.original_due_date || null,
+        client_id:               r.client_id || null,
+        project_id:              r.project_id || null,
+        currency:                r.currency,
+        subtotal,
+        vat_amount:              vatAmount,
+        discount_amount:         discAmount,
+        wht_applied:             r.wht_applied,
+        wht_rate:                r.wht_applied ? whtRate : null,
+        wht_amount:              r.wht_applied ? whtAmt : null,
+        gross_invoice_total:     grossTotal,
+        amount_paid:             amountPaid,
+        payment_date:            r.payment_date || null,
+        payment_method:          r.payment_method || null,
+        payment_reference:       r.payment_reference || null,
+        original_receipt_number: r.original_receipt_number || null,
+        wht_certificate_number:  r.wht_certificate_number || null,
+        migration_remarks:       r.migration_remarks || null,
+        migration_source:        r.migration_source || 'manual_migration',
+        migrated_by:             user?.id ?? null,
+        status:                  'MIGRATED',
+      });
+
+      // 5. Link invoice back to its migration record
+      await supabase
+        .from('invoices')
+        .update({ migrated_at: now })
+        .eq('id', inv.id);
     }
 
     setSaved(true);
@@ -177,7 +284,7 @@ export default function MigrateInvoicesPage() {
         <CheckCircle className="h-12 w-12 text-green-500" />
         <h2 className="text-xl font-bold text-slate-800">Migration Saved</h2>
         <p className="text-slate-500 text-sm">
-          {rows.filter(r => r.original_invoice_number.trim()).length} invoice(s) recorded successfully.
+          {rows.filter(r => r.original_invoice_number.trim() && r.client_id).length} invoice(s) imported and now visible in the Invoices list and client summaries.
         </p>
         <div className="flex gap-3">
           <button
@@ -210,9 +317,10 @@ export default function MigrateInvoicesPage() {
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 text-sm text-amber-800">
-        <strong>Note:</strong> Migrated invoices preserve the original invoice number and date for audit trail.
-        They are stored in a separate migration ledger and marked with status <code className="bg-amber-100 px-1 rounded">MIGRATED</code>.
-        Old dates are accepted without validation.
+        <strong>Note:</strong> Each imported invoice will appear in the main Invoices list and client summaries,
+        tagged <code className="bg-amber-100 px-1 rounded">Migrated</code>. The original invoice number and date
+        are preserved for audit trail. Old dates are accepted without validation.
+        <strong> Invoice Number, Issue Date, and Client are required per row.</strong>
       </div>
 
       {error && (
