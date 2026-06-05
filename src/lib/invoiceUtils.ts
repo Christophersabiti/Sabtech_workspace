@@ -63,6 +63,7 @@ export function invoiceStatusColor(status: InvoiceStatus): string {
     overdue:        'bg-red-100 text-red-700',
     cancelled:      'bg-slate-100 text-slate-400',
     void:           'bg-red-200 text-red-800',
+    migrated:       'bg-purple-100 text-purple-700',
   };
   return map[status] ?? 'bg-slate-100 text-slate-600';
 }
