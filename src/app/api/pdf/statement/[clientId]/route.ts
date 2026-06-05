@@ -152,12 +152,11 @@ export async function GET(
       .single(),
     supabase
       .from('invoices')
-      .select('*, project:projects(project_name, project_code)')
+      .select('id, invoice_number, issue_date, due_date, total_amount, total_paid, balance_due, status, currency, notes, apply_wht, wht_amount, wht_rate, net_payable_amount, ura_wht_remittance_status, project:projects(project_name, project_code)')
       .eq('client_id', clientId)
       .eq('company_id', access.companyId)
       .not('status', 'in', '("void","cancelled")')
-      .order('issue_date', { ascending: true })
-      .select('id, invoice_number, issue_date, due_date, total_amount, total_paid, balance_due, status, currency, notes, project:projects(project_name, project_code), apply_wht, wht_amount, wht_rate, net_payable_amount, ura_wht_remittance_status'),
+      .order('issue_date', { ascending: true }),
     supabase
       .from('payments')
       .select('*, invoice:invoices(invoice_number)')
