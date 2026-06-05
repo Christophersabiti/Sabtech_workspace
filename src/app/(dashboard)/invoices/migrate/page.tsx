@@ -186,19 +186,32 @@ export default function MigrateInvoicesPage() {
         return;
       }
 
-      // 2. Insert a single line item so the invoice is complete
+      // 2. Insert a single line item with tax_percent = 0 to avoid trigger precision loss.
+      //    (tax_percent is numeric(5,2) — storing e.g. 5.9964% rounds to 6.00%, corrupting tax_amount)
+      //    We restore the exact historical amounts in step 2b.
       await supabase.from('invoice_items').insert({
-        company_id:      activeCompanyId,
-        invoice_id:      inv.id,
-        item_name:       `Historical Invoice — ${r.original_invoice_number.trim()}`,
-        description:     r.migration_remarks || null,
-        quantity:        1,
-        unit_price:      subtotal,
-        discount_percent: discAmount > 0 && subtotal > 0 ? (discAmount / subtotal) * 100 : 0,
-        tax_percent:     subtotal > 0 ? (vatAmount / subtotal) * 100 : 0,
-        line_total:      subtotal,
-        sort_order:      0,
+        company_id:       activeCompanyId,
+        invoice_id:       inv.id,
+        item_name:        `Historical Invoice — ${r.original_invoice_number.trim()}`,
+        description:      r.migration_remarks || null,
+        quantity:         1,
+        unit_price:       subtotal,
+        discount_percent: 0,
+        tax_percent:      0,
+        line_total:       subtotal,
+        sort_order:       0,
       });
+
+      // 2b. Force-write the exact historical amounts after the trigger has fired.
+      //     The trigger set tax_amount = 0 (because tax_percent = 0 above); override with correct values.
+      await supabase.from('invoices').update({
+        subtotal,
+        discount_amount: discAmount,
+        tax_amount:      vatAmount,
+        total_amount:    grossTotal,
+        total_paid:      amountPaid,
+        balance_due:     balanceDue,
+      }).eq('id', inv.id);
 
       // 3. Insert payment record if amount was paid
       if (amountPaid > 0 && r.payment_date) {
