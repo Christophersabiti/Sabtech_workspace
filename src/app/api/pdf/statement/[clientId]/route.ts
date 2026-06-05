@@ -60,10 +60,12 @@ function fmtDate(d: string | null | undefined): string {
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft', sent: 'Sent', partially_paid: 'Partially Paid',
   paid: 'Paid', overdue: 'Overdue', cancelled: 'Cancelled', void: 'Void',
+  migrated: 'Migrated',
 };
 const STATUS_COLORS: Record<string, string> = {
   draft: '#64748b', sent: '#2563eb', partially_paid: '#d97706',
   paid: '#16a34a', overdue: '#dc2626', cancelled: '#94a3b8', void: '#94a3b8',
+  migrated: '#7c3aed',
 };
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   bank_transfer: 'Bank Transfer', mobile_money: 'Mobile Money',
@@ -82,6 +84,8 @@ type DBInvoice = {
   total_amount: number; total_paid: number; balance_due: number;
   status: string; currency: string; notes: string | null;
   project: { project_name: string; project_code: string } | null;
+  apply_wht: boolean; wht_amount: number; wht_rate: number;
+  net_payable_amount: number; ura_wht_remittance_status: string;
 };
 type DBPayment = {
   id: string; payment_number: string; payment_date: string;
@@ -152,7 +156,8 @@ export async function GET(
       .eq('client_id', clientId)
       .eq('company_id', access.companyId)
       .not('status', 'in', '("void","cancelled")')
-      .order('issue_date', { ascending: true }),
+      .order('issue_date', { ascending: true })
+      .select('id, invoice_number, issue_date, due_date, total_amount, total_paid, balance_due, status, currency, notes, project:projects(project_name, project_code), apply_wht, wht_amount, wht_rate, net_payable_amount, ura_wht_remittance_status'),
     supabase
       .from('payments')
       .select('*, invoice:invoices(invoice_number)')
@@ -215,18 +220,26 @@ export async function GET(
   const overdueBalance = invoices
     .filter(i => i.status === 'overdue')
     .reduce((s, i) => s + i.balance_due, 0);
+  const totalWht       = invoices
+    .filter(i => i.apply_wht)
+    .reduce((s, i) => s + (i.wht_amount ?? 0), 0);
+  const hasWht         = totalWht > 0;
   const currency       = client.currency || 'UGX';
   const today          = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
 
   // ── Invoices table HTML ────────────────────────────────────────────────────
+  const invColspan = hasWht ? 8 : 7;
   const invoicesHtml = invoices.length === 0
-    ? `<tr><td colspan="7" style="padding:20px;text-align:center;color:#94a3b8">No invoices on record</td></tr>`
+    ? `<tr><td colspan="${invColspan}" style="padding:20px;text-align:center;color:#94a3b8">No invoices on record</td></tr>`
     : invoices.map(inv => `
       <tr style="${inv.status === 'overdue' ? 'background:#fff7ed' : ''}">
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px;color:#475569">${inv.invoice_number}</td>
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#475569">${fmtDate(inv.issue_date)}</td>
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:${inv.status === 'overdue' ? '#dc2626' : '#475569'}">${fmtDate(inv.due_date)}</td>
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#475569">${inv.project ? inv.project.project_name : (inv.notes ? inv.notes.slice(0, 40) : '—')}</td>
+        ${hasWht ? `<td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:12px;color:${inv.apply_wht ? '#b45309' : '#94a3b8'};font-weight:600">
+          ${inv.apply_wht ? `${inv.wht_rate}% / ${fmt(inv.wht_amount, inv.currency)}` : '—'}
+        </td>` : ''}
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:12px;font-weight:600;color:#0f172a">${fmt(inv.total_amount, inv.currency)}</td>
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:12px;color:#16a34a;font-weight:600">${fmt(inv.total_paid, inv.currency)}</td>
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:12px;font-weight:700;color:${inv.balance_due > 0 ? '#b45309' : '#16a34a'}">${fmt(inv.balance_due, inv.currency)}</td>
@@ -350,6 +363,11 @@ export async function GET(
         <span style="color:#64748b">Total Payments Received</span>
         <span style="font-weight:700;color:#16a34a">${fmt(totalPaid, currency)}</span>
       </div>
+      ${hasWht ? `
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12px">
+        <span style="color:#b45309;font-weight:600">Remit to URA (WHT)</span>
+        <span style="font-weight:700;color:#b45309">${fmt(totalWht, currency)}</span>
+      </div>` : ''}
       <div style="display:flex;justify-content:space-between;padding:10px 12px;margin-top:8px;border-radius:8px;background:${totalBalance > 0 ? '#fffbeb' : '#f0fdf4'};font-size:14px;font-weight:700">
         <span style="color:${totalBalance > 0 ? '#b45309' : '#15803d'}">Balance Due</span>
         <span style="color:${totalBalance > 0 ? '#b45309' : '#15803d'}">${fmt(totalBalance, currency)}</span>
@@ -371,6 +389,7 @@ export async function GET(
           <th>Issued</th>
           <th>Due</th>
           <th>Description</th>
+          ${hasWht ? `<th class="r">WHT</th>` : ''}
           <th class="r">Amount</th>
           <th class="r">Paid</th>
           <th class="r">Balance</th>
@@ -384,6 +403,7 @@ export async function GET(
       <tfoot>
         <tr style="background:#f8fafc">
           <td colspan="4" style="padding:10px 12px;font-size:12px;font-weight:700;color:#475569">Totals</td>
+          ${hasWht ? `<td style="padding:10px 12px;text-align:right;font-weight:700;font-size:13px;color:#b45309">${fmt(totalWht, currency)}</td>` : ''}
           <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:13px">${fmt(totalInvoiced, currency)}</td>
           <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:13px;color:#16a34a">${fmt(totalPaid, currency)}</td>
           <td style="padding:10px 12px;text-align:right;font-weight:700;font-size:13px;color:${totalBalance > 0 ? '#b45309' : '#16a34a'}">${fmt(totalBalance, currency)}</td>
