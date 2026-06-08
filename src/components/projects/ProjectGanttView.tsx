@@ -183,7 +183,7 @@ function GanttRow({
           fill={isOverdue ? '#991b1b' : '#1e293b'}
           clipPath={`url(#clip-${task.id})`}
         >
-          {task.title}
+          {task.task_number != null ? `#${task.task_number} ` : ''}{task.title}
         </text>
       )}
       <defs>
@@ -218,7 +218,7 @@ function GanttRow({
             rx={6} fill="#1e293b" opacity={0.95}
           />
           <text x={Math.min(x1 + 8, totalWidth - 172)} y={y - 42} fontSize={11} fontWeight={600} fill="white">
-            {task.title.slice(0, 22)}{task.title.length > 22 ? '…' : ''}
+            {task.task_number != null ? `#${task.task_number} ` : ''}{task.title.slice(0, 22)}{task.title.length > 22 ? '…' : ''}
           </text>
           <text x={Math.min(x1 + 8, totalWidth - 172)} y={y - 28} fontSize={10} fill="#94a3b8">
             {task.start_date} → {task.end_date}
@@ -423,7 +423,10 @@ export function ProjectGanttView({ tasks, projectStartDate, projectEndDate, onEd
                       task.status === 'completed' ? 'line-through text-gray-400' :
                       isOverdue ? 'text-red-600 font-medium' : 'text-gray-700'
                     }`}>
-                      {task.title}
+                      {task.task_number != null ? `#${task.task_number} ` : ''}{task.title}
+                      {task.phase && (
+                        <span className="text-[10px] text-gray-400 ml-1">({task.phase})</span>
+                      )}
                     </span>
 
                     {isOverdue && (

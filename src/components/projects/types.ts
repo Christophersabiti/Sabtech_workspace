@@ -30,6 +30,8 @@ export type EnhancedProjectTask = {
   tags: string[];
   is_billable: boolean;
   estimated_hours: number | null;
+  task_number: number | null;
+  phase: string | null;
   created_at: string;
   updated_at: string | null;
 };

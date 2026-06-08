@@ -128,8 +128,15 @@ function KanbanCard({
             <p className={`text-sm font-medium text-gray-800 leading-snug line-clamp-2 ${
               task.status === 'completed' ? 'line-through text-gray-400' : ''
             }`}>
-              {task.title}
+              {task.task_number != null ? `#${task.task_number} ` : ''}{task.title}
             </p>
+
+            {/* Phase Badge */}
+            {task.phase && (
+              <div className="inline-flex items-center text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">
+                {task.phase}
+              </div>
+            )}
 
             {/* Tags */}
             {task.tags?.length > 0 && (

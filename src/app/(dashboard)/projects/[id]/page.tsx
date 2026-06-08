@@ -38,6 +38,8 @@ type Tab = 'overview' | 'tasks' | 'invoices' | 'schedule';
 
 type TaskUploadRow = {
   rowNumber: number;
+  task_number?: number | null;
+  phase?: string;
   title: string;
   description: string;
   start_date: string;
@@ -65,7 +67,7 @@ const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
   invoice_id: '',
 };
 
-const TASK_TEMPLATE_HEADERS = ['Title', 'Description', 'Start Date', 'Due Date', 'Assigned To', 'Status'];
+const TASK_TEMPLATE_HEADERS = ['Task Number', 'Phase', 'Title', 'Description', 'Start Date', 'Due Date', 'Assigned To', 'Status'];
 
 const TASK_STATUS_ALIASES: Record<string, TaskStatus> = {
   pending:     'pending',
@@ -128,7 +130,32 @@ function normalizeTaskStatus(v: string): TaskStatus | null {
 function normalizeHeader(v: string) {
   return v.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
-function isValidIsoDate(v: string) { return !v || /^\d{4}-\d{2}-\d{2}$/.test(v); }
+function parseAndNormalizeCsvDate(v: string): { isoDate: string; error: string | null } {
+  const trimmed = v.trim();
+  if (!trimmed) return { isoDate: '', error: null };
+  
+  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) {
+    return { isoDate: '', error: 'must use DD/MM/YYYY format.' };
+  }
+  
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+  
+  if (month < 1 || month > 12) {
+    return { isoDate: '', error: 'month must be between 1 and 12.' };
+  }
+  
+  const maxDays = new Date(year, month, 0).getDate();
+  if (day < 1 || day > maxDays) {
+    return { isoDate: '', error: `day must be between 1 and ${maxDays}.` };
+  }
+  
+  const mm = month < 10 ? `0${month}` : `${month}`;
+  const dd = day < 10 ? `0${day}` : `${day}`;
+  return { isoDate: `${year}-${mm}-${dd}`, error: null };
+}
 
 function buildTaskUploadRows(text: string): { rows: TaskUploadRow[]; error: string | null } {
   const csvRows = parseCsv(text);
@@ -137,16 +164,25 @@ function buildTaskUploadRows(text: string): { rows: TaskUploadRow[]; error: stri
   const idx = (names: string[]) => names.map(n => headers.indexOf(n)).find(i => i >= 0) ?? -1;
   const titleIdx   = idx(['title','task','task_title']);
   if (titleIdx < 0) return { rows: [], error: 'The CSV must include a Title column.' };
-  const descIdx   = idx(['description','details','notes']);
-  const startIdx  = idx(['start_date','start']);
-  const dueIdx    = idx(['due_date','end_date','deadline','due']);
-  const assignIdx = idx(['assigned_to','assignee','owner']);
-  const statusIdx = idx(['status']);
+  const taskNoIdx  = idx(['task_number', 'task_no', 'task_num', 'number', 'no', '#']);
+  const phaseIdx   = idx(['phase', 'phases']);
+  const descIdx    = idx(['description','details','notes']);
+  const startIdx   = idx(['start_date','start']);
+  const dueIdx     = idx(['due_date','end_date','deadline','due']);
+  const assignIdx  = idx(['assigned_to','assignee','owner']);
+  const statusIdx  = idx(['status']);
   const rows = csvRows.slice(1).map((r, i) => {
     const sv = statusIdx >= 0 ? r[statusIdx] || '' : '';
     const status = normalizeTaskStatus(sv);
+    const rawNo = taskNoIdx >= 0 ? r[taskNoIdx]?.trim() || '' : '';
+    const parsedNo = rawNo ? parseInt(rawNo, 10) : null;
+    const task_number = (parsedNo != null && !isNaN(parsedNo)) ? parsedNo : null;
+    const phase = phaseIdx >= 0 ? r[phaseIdx]?.trim() || '' : '';
+
     const row: TaskUploadRow = {
       rowNumber: i + 2,
+      task_number,
+      phase,
       title:       r[titleIdx]?.trim()   || '',
       description: descIdx  >= 0 ? r[descIdx]?.trim()  || '' : '',
       start_date:  startIdx >= 0 ? r[startIdx]?.trim() || '' : '',
@@ -157,24 +193,40 @@ function buildTaskUploadRows(text: string): { rows: TaskUploadRow[]; error: stri
     };
     if (!row.title) row.errors.push('Title is required.');
     if (!status)    row.errors.push('Invalid status value.');
-    if (!isValidIsoDate(row.start_date)) row.errors.push('Start Date must use YYYY-MM-DD.');
-    if (!isValidIsoDate(row.end_date))   row.errors.push('Due Date must use YYYY-MM-DD.');
+    if (rawNo && (parsedNo === null || isNaN(parsedNo))) {
+      row.errors.push('Task Number must be a valid integer.');
+    }
+    
+    const startParse = parseAndNormalizeCsvDate(row.start_date);
+    const dueParse = parseAndNormalizeCsvDate(row.end_date);
+    
+    if (startParse.error) {
+      row.errors.push(`Start Date: ${startParse.error}`);
+    } else {
+      row.start_date = startParse.isoDate;
+    }
+    
+    if (dueParse.error) {
+      row.errors.push(`Due Date: ${dueParse.error}`);
+    } else {
+      row.end_date = dueParse.isoDate;
+    }
+    
     if (row.start_date && row.end_date && row.end_date < row.start_date)
       row.errors.push('Due Date cannot be before Start Date.');
     return row;
-  }).filter(r => r.title || r.description || r.start_date || r.end_date || r.assigned_to);
+  }).filter(r => r.title || r.description || r.start_date || r.end_date || r.assigned_to || r.phase || r.task_number != null);
   if (rows.length === 0) return { rows: [], error: 'No task rows found in the CSV.' };
   return { rows, error: null };
 }
 
-function sortTasksByStartDateDesc(list: EnhancedProjectTask[]) {
+function sortTasksByTaskNumberAsc(list: EnhancedProjectTask[]) {
   return [...list].sort((a, b) => {
-    const aDate = a.start_date ?? '';
-    const bDate = b.start_date ?? '';
-    if (aDate && bDate && aDate !== bDate) return bDate.localeCompare(aDate);
-    if (aDate && !bDate) return -1;
-    if (!aDate && bDate) return 1;
-    return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+    const aNum = a.task_number ?? 0;
+    const bNum = b.task_number ?? 0;
+    if (aNum !== bNum) return aNum - bNum;
+    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+    return (a.created_at ?? '').localeCompare(b.created_at ?? '');
   });
 }
 
@@ -312,13 +364,15 @@ export default function ProjectProfilePage() {
     }
 
     // Normalise tasks — ensure new fields have defaults for rows created before migration
-    setTasks(sortTasksByStartDateDesc((tsk || []).map((t: Record<string, unknown>) => ({
+    setTasks(sortTasksByTaskNumberAsc((tsk || []).map((t: Record<string, unknown>) => ({
       ...t,
       priority:      t.priority      ?? 'medium',
       progress:      t.progress      ?? 0,
       sort_order:    t.sort_order    ?? 0,
       parent_task_id: t.parent_task_id ?? null,
       tags:          Array.isArray(t.tags) ? t.tags : [],
+      task_number:   t.task_number != null ? Number(t.task_number) : null,
+      phase:         t.phase         ?? null,
     })) as EnhancedProjectTask[]));
     setLoading(false);
   }, [activeCompanyId, companyLoading, id, supabase]);
@@ -568,6 +622,8 @@ export default function ProjectProfilePage() {
       is_billable:     values.is_billable,
       estimated_hours: values.estimated_hours ? parseFloat(values.estimated_hours) : null,
       tags:            tagsArray,
+      task_number:     values.task_number ? parseInt(values.task_number, 10) : null,
+      phase:           values.phase.trim() || null,
     };
 
     if (drawerTask) {
@@ -578,7 +634,7 @@ export default function ProjectProfilePage() {
         .eq('id', drawerTask.id)
         .eq('company_id', project.company_id);
       if (!error) {
-        setTasks(ts => sortTasksByStartDateDesc(
+        setTasks(ts => sortTasksByTaskNumberAsc(
           ts.map(t => t.id === drawerTask.id ? { ...t, ...payload } : t)
         ));
         setProjectToast({ msg: 'Task updated.', ok: true });
@@ -599,8 +655,10 @@ export default function ProjectProfilePage() {
           sort_order:    data.sort_order     ?? tasks.length,
           parent_task_id: data.parent_task_id ?? null,
           tags:          Array.isArray(data.tags) ? data.tags : [],
+          task_number:   data.task_number    ?? null,
+          phase:         data.phase          ?? null,
         } as EnhancedProjectTask;
-        setTasks(ts => sortTasksByStartDateDesc([...ts, newTask]));
+        setTasks(ts => sortTasksByTaskNumberAsc([...ts, newTask]));
         setProjectToast({ msg: 'Task created.', ok: true });
         setTimeout(() => setProjectToast(null), 2500);
       }
@@ -622,7 +680,7 @@ export default function ProjectProfilePage() {
 
   async function updateTaskStatus(taskId: string, newStatus: TaskStatus) {
     if (!project) return;
-    setTasks(ts => sortTasksByStartDateDesc(ts.map(t =>
+    setTasks(ts => sortTasksByTaskNumberAsc(ts.map(t =>
       t.id === taskId
         ? { ...t, status: newStatus, progress: newStatus === 'completed' ? 100 : t.progress }
         : t
@@ -664,6 +722,8 @@ export default function ProjectProfilePage() {
       assigned_to: r.assigned_to || null, status: r.status,
       priority: 'medium', progress: 0, sort_order: tasks.length + i,
       tags: [],
+      task_number: r.task_number || null,
+      phase:       r.phase || null,
     }));
     const { data, error } = await supabase.from('project_tasks').insert(payload).select();
     if (error) {
@@ -676,8 +736,10 @@ export default function ProjectProfilePage() {
         sort_order:    t.sort_order    ?? 0,
         parent_task_id: t.parent_task_id ?? null,
         tags:          Array.isArray(t.tags) ? t.tags : [],
+        task_number:   t.task_number != null ? Number(t.task_number) : null,
+        phase:         t.phase         ?? null,
       })) as EnhancedProjectTask[];
-      setTasks(ts => sortTasksByStartDateDesc([...ts, ...newTasks]));
+      setTasks(ts => sortTasksByTaskNumberAsc([...ts, ...newTasks]));
       setShowTaskUpload(false);
       setProjectToast({ msg: `${validRows.length} task${validRows.length === 1 ? '' : 's'} uploaded.`, ok: true });
       setTimeout(() => setProjectToast(null), 3000);
@@ -951,7 +1013,7 @@ export default function ProjectProfilePage() {
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 border-b border-slate-200">
                         <tr>
-                          {['Task', 'Priority', 'Progress', 'Dates', 'Assigned To', 'Status', ''].map(h => (
+                          {['#', 'Task', 'Phase', 'Priority', 'Progress', 'Dates', 'Assigned To', 'Status', ''].map(h => (
                             <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase">{h}</th>
                           ))}
                         </tr>
@@ -962,6 +1024,9 @@ export default function ProjectProfilePage() {
                           return (
                             <tr key={task.id} className={`group cursor-pointer ${isOverdue ? 'bg-red-50/60' : 'hover:bg-slate-50'}`}
                               onClick={() => openEditTask(task)}>
+                              <td className="px-4 py-3 text-xs font-semibold text-slate-400 tabular-nums">
+                                #{task.task_number != null ? task.task_number : '—'}
+                              </td>
                               <td className="px-4 py-3 max-w-[220px]">
                                 <p className={`font-medium ${isOverdue ? 'text-red-700' : 'text-slate-900'} truncate`}>{task.title}</p>
                                 {task.description && <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{task.description}</p>}
@@ -977,6 +1042,9 @@ export default function ProjectProfilePage() {
                                     ))}
                                   </div>
                                 )}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-slate-600 font-medium">
+                                {task.phase || '—'}
                               </td>
                               <td className="px-4 py-3">
                                 <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -1050,7 +1118,14 @@ export default function ProjectProfilePage() {
                         >
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <div className="min-w-0">
-                              <p className={`font-medium text-sm truncate ${isOverdue ? 'text-red-700' : 'text-slate-900'}`}>{task.title}</p>
+                              <p className={`font-medium text-sm truncate ${isOverdue ? 'text-red-700' : 'text-slate-900'}`}>
+                                {task.task_number != null ? `#${task.task_number} ` : ''}{task.title}
+                              </p>
+                              {task.phase && (
+                                <span className="inline-flex items-center mt-1 text-[10px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">
+                                  {task.phase}
+                                </span>
+                              )}
                               {task.description && <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{task.description}</p>}
                             </div>
                             <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0 ${TASK_STATUS_COLORS[task.status]}`}>
@@ -1084,7 +1159,7 @@ export default function ProjectProfilePage() {
               tasks={filteredTasks}
               companyId={project.company_id}
               projectId={id}
-              onTasksChange={updated => setTasks(sortTasksByStartDateDesc(updated))}
+              onTasksChange={updated => setTasks(sortTasksByTaskNumberAsc(updated))}
               onEditTask={openEditTask}
               onAddTask={openAddTask}
             />
@@ -1272,7 +1347,7 @@ export default function ProjectProfilePage() {
                 <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center hover:border-blue-300 hover:bg-blue-50/50">
                   <FileSpreadsheet className="h-7 w-7 text-blue-600" />
                   <span className="mt-2 text-sm font-medium text-slate-800">{taskUploadFileName || 'Choose a CSV file'}</span>
-                  <span className="mt-1 text-xs text-slate-500">Columns: Title, Description, Start Date, Due Date, Assigned To, Status</span>
+                  <span className="mt-1 text-xs text-slate-500">Columns: Task Number, Phase, Title, Description, Start Date, Due Date, Assigned To, Status</span>
                   <input type="file" accept=".csv,text/csv" className="sr-only" onChange={e => { const f = e.target.files?.[0]; if (f) void readTaskUploadFile(f); e.currentTarget.value = ''; }} />
                 </label>
                 <button type="button" onClick={downloadTaskTemplate} className="inline-flex h-28 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">
@@ -1300,7 +1375,7 @@ export default function ProjectProfilePage() {
                   <div className="max-h-72 overflow-auto">
                     <table className="w-full min-w-[640px] text-sm">
                       <thead className="bg-white border-b border-slate-100">
-                        <tr>{['Row','Title','Due Date','Assigned To','Status','Validation'].map(h => (
+                        <tr>{['Row','Task #','Phase','Title','Due Date','Assigned To','Status','Validation'].map(h => (
                           <th key={h} className="px-4 py-3 text-left text-xs font-medium uppercase text-slate-500">{h}</th>
                         ))}</tr>
                       </thead>
@@ -1308,6 +1383,8 @@ export default function ProjectProfilePage() {
                         {taskUploadRows.map(row => (
                           <tr key={row.rowNumber} className={row.errors.length > 0 ? 'bg-red-50/60' : 'hover:bg-slate-50'}>
                             <td className="px-4 py-3 text-xs text-slate-500">{row.rowNumber}</td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{row.task_number != null ? `#${row.task_number}` : '-'}</td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{row.phase || '-'}</td>
                             <td className="px-4 py-3"><p className="font-medium text-slate-900">{row.title || '-'}</p></td>
                             <td className="px-4 py-3 text-xs text-slate-500">{row.end_date || '-'}</td>
                             <td className="px-4 py-3 text-sm text-slate-600">{row.assigned_to || '-'}</td>

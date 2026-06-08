@@ -20,6 +20,8 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type TaskFormValues = {
+  task_number: string;
+  phase: string;
   title: string;
   description: string;
   status: TaskStatus;
@@ -50,6 +52,7 @@ const ALL_PRIORITIES: TaskPriority[] = ['low','medium','high','critical'];
 
 function emptyForm(defaultStatus: TaskStatus = 'pending'): TaskFormValues {
   return {
+    task_number: '', phase: '',
     title: '', description: '', status: defaultStatus, priority: 'medium',
     progress: 0, start_date: '', end_date: '', assigned_to: '',
     is_billable: false, estimated_hours: '', tags: '',
@@ -58,6 +61,8 @@ function emptyForm(defaultStatus: TaskStatus = 'pending'): TaskFormValues {
 
 function taskToForm(t: EnhancedProjectTask): TaskFormValues {
   return {
+    task_number:     t.task_number?.toString() ?? '',
+    phase:           t.phase ?? '',
     title:           t.title,
     description:     t.description ?? '',
     status:          t.status,
@@ -215,6 +220,31 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, onClose, 
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+          {/* Phase + Task Number */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Phase</label>
+              <input
+                type="text"
+                value={form.phase}
+                onChange={e => set('phase', e.target.value)}
+                placeholder="e.g. Phase 1"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Task Number</label>
+              <input
+                type="number"
+                min={1}
+                value={form.task_number}
+                onChange={e => set('task_number', e.target.value)}
+                placeholder="Auto-assigned"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
+              />
+            </div>
+          </div>
 
           {/* Title */}
           <div>

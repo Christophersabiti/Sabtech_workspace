@@ -44,7 +44,9 @@ export function applyFilters(tasks: EnhancedProjectTask[], filters: TaskFilters)
       const q = filters.search.toLowerCase();
       if (!t.title.toLowerCase().includes(q) &&
           !(t.description?.toLowerCase().includes(q)) &&
-          !(t.assigned_to?.toLowerCase().includes(q))) {
+          !(t.assigned_to?.toLowerCase().includes(q)) &&
+          !(t.phase?.toLowerCase().includes(q)) &&
+          !(t.task_number?.toString().includes(q))) {
         return false;
       }
     }
