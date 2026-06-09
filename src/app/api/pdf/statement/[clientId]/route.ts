@@ -83,7 +83,7 @@ type DBInvoice = {
   id: string; invoice_number: string; issue_date: string; due_date: string | null;
   total_amount: number; total_paid: number; balance_due: number;
   status: string; currency: string; notes: string | null;
-  project: { project_name: string; project_code: string } | null;
+  project: { project_name: string; project_code: string }[] | null;
   apply_wht: boolean; wht_amount: number; wht_rate: number;
   net_payable_amount: number; ura_wht_remittance_status: string;
 };
@@ -235,7 +235,7 @@ export async function GET(
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:11px;color:#475569">${inv.invoice_number}</td>
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#475569">${fmtDate(inv.issue_date)}</td>
         <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:${inv.status === 'overdue' ? '#dc2626' : '#475569'}">${fmtDate(inv.due_date)}</td>
-        <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#475569">${inv.project ? inv.project.project_name : (inv.notes ? inv.notes.slice(0, 40) : '—')}</td>
+        <td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#475569">${inv.project?.[0]?.project_name ?? (inv.notes ? inv.notes.slice(0, 40) : '—')}</td>
         ${hasWht ? `<td style="padding:9px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:12px;color:${inv.apply_wht ? '#b45309' : '#94a3b8'};font-weight:600">
           ${inv.apply_wht ? `${inv.wht_rate}% / ${fmt(inv.wht_amount, inv.currency)}` : '—'}
         </td>` : ''}
