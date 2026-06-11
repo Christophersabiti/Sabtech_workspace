@@ -27,6 +27,7 @@ import {
   ChevronsUpDown,
   Plus,
   Check,
+  CalendarDays,
 } from 'lucide-react';
 import { useState, useEffect, useMemo, ElementType } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -37,6 +38,7 @@ import { NavItem } from './NavItem';
 
 const mainNav = [
   { label: 'Dashboard',   href: '/',            icon: LayoutDashboard },
+  { label: 'Calendar',    href: '/calendar',    icon: CalendarDays },
   { label: 'Clients',     href: '/clients',      icon: Users },
   { label: 'Projects',    href: '/projects',     icon: FolderOpen },
   { label: 'Quotations',  href: '/quotations',   icon: ClipboardList },
@@ -52,6 +54,7 @@ const settingsNav = [
   { label: 'Payment Methods', href: '/admin/settings/payment-methods', icon: Wallet },
   { label: 'Invoice Settings', href: '/admin/settings/invoice', icon: Receipt },
   { label: 'Branding', href: '/admin/settings/branding', icon: Palette },
+  { label: 'Calendar', href: '/settings/calendar', icon: CalendarDays },
 ];
 
 const adminNav = [
