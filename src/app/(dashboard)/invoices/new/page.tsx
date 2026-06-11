@@ -59,7 +59,7 @@ function NewInvoiceForm() {
     due_date: '',
     currency: 'UGX',
     notes: '',
-    footer_note: 'Thank you for your business. Payment details: Stanbic Bank | Sabtech Online | Acc: 9030016540799',
+    footer_note: 'Thank you for your business. Payment details: Attached | Sabtech Online',
   });
 
   const [items, setItems] = useState<LineItem[]>([{
