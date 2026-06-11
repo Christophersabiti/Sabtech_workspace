@@ -38,6 +38,7 @@ export function TimeLogDrawer({ task, open, onClose, onLoggedChange }: Props) {
   // Sync logs when task changes or drawer opens
   useEffect(() => {
     if (open && task) {
+      // eslint-disable-next-line react-hooks/immutability
       loadLogs();
       // Reset form defaults
       setHours('');

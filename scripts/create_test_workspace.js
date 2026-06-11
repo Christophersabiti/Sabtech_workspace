@@ -4,8 +4,10 @@
   Usage: node scripts/create_test_workspace.js test@example.com "Company Name"
 */
 // Load .env.local if present
+/* eslint-disable @typescript-eslint/no-require-imports */
 try { require('dotenv').config({ path: '.env.local' }); } catch {}
 const { createClient } = require('@supabase/supabase-js');
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;

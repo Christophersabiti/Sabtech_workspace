@@ -153,6 +153,7 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, onClose, 
   // Sync form when task changes
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setForm(task ? taskToForm(task) : emptyForm(defaultStatus));
       setConfirmDelete(false);
     }

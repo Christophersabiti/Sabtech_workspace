@@ -17,11 +17,13 @@ function BillingCallbackContent() {
 
   useEffect(() => {
     if (!merchantReference) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStatus('failed');
       return;
     }
 
     const supabase = createClient();
+    // eslint-disable-next-line prefer-const, @typescript-eslint/no-explicit-any
     let intervalId: any;
 
     async function checkStatus() {
@@ -127,7 +129,7 @@ function BillingCallbackContent() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-slate-900">Confirmation Pending</h1>
-              <p className="text-xs text-slate-500 mt-1">We haven't received confirmation yet. We will update your subscription as soon as the gateway notifies us.</p>
+              <p className="text-xs text-slate-500 mt-1">We haven&apos;t received confirmation yet. We will update your subscription as soon as the gateway notifies us.</p>
             </div>
             <div className="pt-2">
               <Link

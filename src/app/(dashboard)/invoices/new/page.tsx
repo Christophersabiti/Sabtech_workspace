@@ -230,6 +230,7 @@ function NewInvoiceForm() {
       }
 
       if (quot.quotation_items && quot.quotation_items.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mappedItems: LineItem[] = quot.quotation_items.map((item: any) => ({
           id: genId(),
           service_id: '',

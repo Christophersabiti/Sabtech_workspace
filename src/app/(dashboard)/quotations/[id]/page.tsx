@@ -357,7 +357,7 @@ export default function QuotationDetailPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <h2 className="text-sm font-semibold text-blue-900 mb-1">Convert to Invoice</h2>
-                <p className="text-xs text-blue-700 mb-4">Generate a fresh client invoice directly pre-filled with this quotation's details and line items. You'll be able to review and adjust it before saving.</p>
+                <p className="text-xs text-blue-700 mb-4">Generate a fresh client invoice directly pre-filled with this quotation&apos;s details and line items. You&apos;ll be able to review and adjust it before saving.</p>
                 <Link
                   href={`/invoices/new?client=${quotation.client_id}&quotation=${quotation.id}`}
                   className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold transition-colors"

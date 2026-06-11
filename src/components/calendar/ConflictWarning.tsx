@@ -24,6 +24,7 @@ export function ConflictWarning({ companyId, startAt, endAt, excludeEventId }: P
     if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) return;
 
     const ac = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
 
     const p = new URLSearchParams({

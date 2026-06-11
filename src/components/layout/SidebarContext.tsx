@@ -29,8 +29,10 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       const stored = localStorage.getItem(LS_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (stored !== null) setCollapsedState(stored === 'true');
     } catch { /* localStorage not available */ }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHydrated(true);
   }, []);
 

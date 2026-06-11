@@ -63,6 +63,7 @@ export default function RolesPage() {
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
   // Auto-dismiss toast

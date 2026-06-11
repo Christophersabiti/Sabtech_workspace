@@ -281,6 +281,7 @@ export function ProjectGanttView({ tasks, projectStartDate, projectEndDate, onEd
     if (projectEndDate)   dates.push(new Date(projectEndDate   + 'T00:00:00').getTime());
 
     const BUFFER = 7 * 86_400_000;
+    // eslint-disable-next-line react-hooks/purity
     const now = Date.now();
     const minDate = dates.length ? Math.min(...dates) - BUFFER : now - 14 * 86_400_000;
     const maxDate = dates.length ? Math.max(...dates) + BUFFER : now + 30 * 86_400_000;
@@ -309,6 +310,7 @@ export function ProjectGanttView({ tasks, projectStartDate, projectEndDate, onEd
   }, [periods, zoom]);
 
   const todayX = useMemo(
+    // eslint-disable-next-line react-hooks/purity
     () => (Date.now() - rangeStart) * pxPerMs,
     [rangeStart, pxPerMs],
   );

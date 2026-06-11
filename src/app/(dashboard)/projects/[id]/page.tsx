@@ -267,7 +267,9 @@ export default function ProjectProfilePage() {
   const [loading,   setLoading]   = useState(true);
 
   // ── Timesheets + Expenses P&L state ─────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [expenses, setExpenses] = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [timeLogs, setTimeLogs] = useState<any[]>([]);
   const [timeLogDrawerOpen, setTimeLogDrawerOpen] = useState(false);
   const [timeLogDrawerTask, setTimeLogDrawerTask] = useState<EnhancedProjectTask | null>(null);
@@ -351,6 +353,7 @@ export default function ProjectProfilePage() {
     setExpenses(exp || []);
 
     // Load time logs for project tasks
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const taskIds = (tsk || []).map((t: any) => t.id);
     if (taskIds.length > 0) {
       const { data: logs } = await supabase

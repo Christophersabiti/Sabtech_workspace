@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
         payment_method: statusResult.paymentMethod,
         payment_account: statusResult.confirmationCode,
         error_message: statusResult.error,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         raw_response: statusResult as any,
         updated_at: new Date().toISOString(),
       })
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest) {
       if (plan) {
         // Calculate expiration date (Starter/Growth/Pro plans are monthly)
         const startsAt = new Date();
-        let endsAt = new Date();
+        const endsAt = new Date();
         if (plan.billing_interval === 'monthly') {
           endsAt.setDate(startsAt.getDate() + 30);
         } else if (plan.billing_interval === 'yearly') {

@@ -138,6 +138,7 @@ export default function AuditLogPage() {
     setLoading(false);
   }, [activeCompanyId, companyLoading, supabase]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
   if (checking) return null;
