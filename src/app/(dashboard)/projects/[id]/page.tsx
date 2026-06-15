@@ -26,6 +26,10 @@ import { ProjectTaskDrawer }                         from '@/components/projects
 import { TimeLogDrawer }                             from '@/components/projects/TimeLogDrawer';
 import type { TaskFormValues }                       from '@/components/projects/ProjectTaskDrawer';
 import type { EnhancedProjectTask, TaskViewMode, TaskStatus } from '@/components/projects/types';
+import RaidLogPanel                                  from '@/components/projects/RaidLogPanel';
+import MilestonesPanel                               from '@/components/projects/MilestonesPanel';
+import ChangeRequestPanel                            from '@/components/projects/ChangeRequestPanel';
+import type { RaidEntry, Milestone, ChangeRequest }  from '@/types';
 import {
   TASK_STATUS_LABELS,
   TASK_STATUS_COLORS,
@@ -34,7 +38,7 @@ import {
 
 // ─── Legacy types preserved for CSV upload compatibility ─────────────────────
 
-type Tab = 'overview' | 'tasks' | 'invoices' | 'schedule';
+type Tab = 'overview' | 'tasks' | 'invoices' | 'schedule' | 'milestones' | 'raid' | 'changes';
 
 type TaskUploadRow = {
   rowNumber: number;
@@ -266,6 +270,11 @@ export default function ProjectProfilePage() {
   const [tasks,     setTasks]     = useState<EnhancedProjectTask[]>([]);
   const [loading,   setLoading]   = useState(true);
 
+  // ── PM state ──────────────────────────────────────────────────────────────
+  const [milestones,     setMilestones]     = useState<Milestone[]>([]);
+  const [raidEntries,    setRaidEntries]    = useState<RaidEntry[]>([]);
+  const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
+
   // ── Timesheets + Expenses P&L state ─────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [expenses, setExpenses] = useState<any[]>([]);
@@ -352,6 +361,16 @@ export default function ProjectProfilePage() {
     setSchedules(sched || []);
     setExpenses(exp || []);
 
+    // Load PM data in parallel
+    const [{ data: msData }, { data: raidData }, { data: crData }] = await Promise.all([
+      supabase.from('milestones').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('sort_order').order('target_date', { ascending: true, nullsFirst: false }),
+      supabase.from('raid_log').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('created_at', { ascending: false }),
+      supabase.from('change_requests').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('created_at', { ascending: false }),
+    ]);
+    setMilestones((msData || []) as Milestone[]);
+    setRaidEntries((raidData || []) as RaidEntry[]);
+    setChangeRequests((crData || []) as ChangeRequest[]);
+
     // Load time logs for project tasks
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const taskIds = (tsk || []).map((t: any) => t.id);
@@ -383,6 +402,7 @@ export default function ProjectProfilePage() {
   useEffect(() => {
     void Promise.resolve().then(() => {
       setProject(null); setInvoices([]); setSchedules([]); setTasks([]);
+      setMilestones([]); setRaidEntries([]); setChangeRequests([]);
       return load();
     });
   }, [load]);
@@ -771,10 +791,13 @@ export default function ProjectProfilePage() {
   };
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview',  label: 'Overview' },
-    { id: 'tasks',     label: `Tasks (${tasks.length})` },
-    { id: 'invoices',  label: `Invoices (${invoices.length})` },
-    { id: 'schedule',  label: 'Billing Schedule' },
+    { id: 'overview',    label: 'Overview' },
+    { id: 'tasks',       label: `Tasks (${tasks.length})` },
+    { id: 'milestones',  label: `Milestones (${milestones.length})` },
+    { id: 'raid',        label: `RAID (${raidEntries.length})` },
+    { id: 'changes',     label: `Change Requests (${changeRequests.length})` },
+    { id: 'invoices',    label: `Invoices (${invoices.length})` },
+    { id: 'schedule',    label: 'Billing Schedule' },
   ];
 
   const statusColor: Record<string, string> = {
@@ -1178,6 +1201,33 @@ export default function ProjectProfilePage() {
             />
           )}
         </div>
+      )}
+
+      {/* ── MILESTONES ── */}
+      {tab === 'milestones' && (
+        <MilestonesPanel
+          projectId={project.id}
+          milestones={milestones}
+          onRefresh={load}
+        />
+      )}
+
+      {/* ── RAID LOG ── */}
+      {tab === 'raid' && (
+        <RaidLogPanel
+          projectId={project.id}
+          entries={raidEntries}
+          onRefresh={load}
+        />
+      )}
+
+      {/* ── CHANGE REQUESTS ── */}
+      {tab === 'changes' && (
+        <ChangeRequestPanel
+          projectId={project.id}
+          requests={changeRequests}
+          onRefresh={load}
+        />
       )}
 
       {/* ── INVOICES ── */}

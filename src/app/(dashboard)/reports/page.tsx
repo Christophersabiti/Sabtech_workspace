@@ -210,6 +210,27 @@ export default function ReportsPage() {
         subtitle="Financial overview, invoice analytics, and collection summary"
       />
 
+      {/* Client Reports Banner */}
+      <a
+        href="/reports/client-reports"
+        className="block mb-6 p-5 bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl
+                   text-white shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30
+                   transition-all group"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold">Client Report Builder</h3>
+            <p className="text-sm text-blue-100 mt-1">
+              Generate branded project reports with filters, financial summaries, and PDF/CSV export
+            </p>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center
+                        group-hover:bg-white/30 transition-colors">
+            <FileText className="w-5 h-5" />
+          </div>
+        </div>
+      </a>
+
       {/* Date range filter */}
       <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-6">
         <span className="text-sm text-slate-500 whitespace-nowrap">Date range:</span>

@@ -161,3 +161,41 @@ export async function logPaymentAction(
     metadata:     entry.metadata      ?? null,
   });
 }
+
+// ─── Report Audit ─────────────────────────────────────────────────────────────
+
+export type ReportAuditAction =
+  | 'generated'
+  | 'exported_pdf'
+  | 'exported_csv'
+  | 'shared'
+  | 'template_used';
+
+export type ReportAuditEntry = {
+  company_id:                   string;
+  user_id:                      string | null;
+  action:                       ReportAuditAction;
+  report_type?:                 string | null;
+  filters_used?:                Record<string, unknown>;
+  financial_visibility_enabled?: boolean;
+  client_id?:                   string | null;
+  project_ids?:                 string[];
+  export_format?:               string | null;
+};
+
+export async function logReportAction(
+  supabase: SupabaseClient,
+  entry:    ReportAuditEntry,
+): Promise<void> {
+  await supabase.from('report_audit_log').insert({
+    company_id:                   entry.company_id,
+    user_id:                      entry.user_id ?? null,
+    action:                       entry.action,
+    report_type:                  entry.report_type ?? null,
+    filters_used:                 entry.filters_used ?? null,
+    financial_visibility_enabled: entry.financial_visibility_enabled ?? false,
+    client_id:                    entry.client_id ?? null,
+    project_ids:                  entry.project_ids ?? null,
+    export_format:                entry.export_format ?? null,
+  });
+}

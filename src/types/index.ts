@@ -472,3 +472,328 @@ export type ProjectTask = {
   created_at: string;
   updated_at: string | null;
 };
+
+// ─── Portfolio Management ────────────────────────────────────────────────────
+
+export type PortfolioStatus = 'active' | 'on_hold' | 'completed' | 'archived';
+export type HealthStatus = 'on_track' | 'at_risk' | 'off_track' | 'completed';
+
+export type Portfolio = {
+  id: string;
+  company_id: string;
+  client_id: string | null;
+  name: string;
+  description: string | null;
+  owner_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  status: PortfolioStatus;
+  health_status: HealthStatus;
+  budget_total: number;
+  progress_percent: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  // Joined
+  client?: Client;
+  owner?: AppUser;
+  projects?: ProjectWithTotals[];
+};
+
+export type PortfolioProject = {
+  id: string;
+  portfolio_id: string;
+  project_id: string;
+  company_id: string;
+  sort_order: number;
+  created_at: string;
+  project?: ProjectWithTotals;
+};
+
+// ─── Project Charter (extended fields) ───────────────────────────────────────
+
+export type ProjectApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected';
+
+export type ProjectWithCharter = Project & {
+  objective: string | null;
+  scope: string | null;
+  deliverables: string | null;
+  assumptions: string | null;
+  exclusions: string | null;
+  baseline_start_date: string | null;
+  baseline_due_date: string | null;
+  revised_due_date: string | null;
+  budget: number | null;
+  currency: string;
+  sponsor: string | null;
+  approval_status: ProjectApprovalStatus;
+  project_health: HealthStatus;
+  project_phase: string | null;
+  internal_only: boolean;
+  client_visible: boolean;
+  financial_visible: boolean;
+};
+
+// ─── Milestones ──────────────────────────────────────────────────────────────
+
+export type MilestoneStatus = 'pending' | 'in_progress' | 'completed' | 'missed' | 'cancelled';
+
+export type Milestone = {
+  id: string;
+  company_id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  target_date: string | null;
+  actual_date: string | null;
+  status: MilestoneStatus;
+  progress: number;
+  remarks: string | null;
+  client_visible: boolean;
+  sort_order: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  tasks?: ProjectTask[];
+};
+
+export type MilestoneTask = {
+  id: string;
+  milestone_id: string;
+  task_id: string;
+  company_id: string;
+  created_at: string;
+};
+
+// ─── RAID Log ────────────────────────────────────────────────────────────────
+
+export type RaidType = 'risk' | 'assumption' | 'issue' | 'decision';
+export type RaidSeverity = 'low' | 'medium' | 'high' | 'critical';
+export type RaidProbability = 'low' | 'medium' | 'high';
+export type RaidStatus = 'open' | 'in_progress' | 'mitigated' | 'resolved' | 'closed' | 'accepted';
+
+export type RaidEntry = {
+  id: string;
+  company_id: string;
+  project_id: string;
+  type: RaidType;
+  title: string;
+  description: string | null;
+  owner_id: string | null;
+  severity: RaidSeverity;
+  probability: RaidProbability;
+  impact: string | null;
+  mitigation: string | null;
+  status: RaidStatus;
+  due_date: string | null;
+  resolution_note: string | null;
+  client_visible: boolean;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  owner?: AppUser;
+};
+
+// ─── Change Requests ─────────────────────────────────────────────────────────
+
+export type ChangeRequestApproval = 'pending' | 'approved' | 'rejected' | 'deferred';
+
+export type ChangeRequest = {
+  id: string;
+  company_id: string;
+  project_id: string;
+  request_number: string;
+  title: string;
+  description: string | null;
+  requested_by: string | null;
+  scope_impact: string | null;
+  cost_impact: number | null;
+  timeline_impact: string | null;
+  approval_status: ChangeRequestApproval;
+  approved_by: string | null;
+  approved_date: string | null;
+  linked_invoice_id: string | null;
+  linked_quotation_id: string | null;
+  client_visible: boolean;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  requester?: AppUser;
+  approver?: AppUser;
+};
+
+// ─── Task Comments & Attachments ─────────────────────────────────────────────
+
+export type TaskComment = {
+  id: string;
+  company_id: string;
+  task_id: string;
+  user_id: string | null;
+  content: string;
+  is_internal: boolean;
+  client_visible: boolean;
+  created_at: string;
+  updated_at: string;
+  user?: AppUser;
+};
+
+export type TaskAttachment = {
+  id: string;
+  company_id: string;
+  task_id: string;
+  uploaded_by: string | null;
+  file_name: string;
+  file_url: string;
+  file_size: number | null;
+  mime_type: string | null;
+  is_internal: boolean;
+  client_visible: boolean;
+  created_at: string;
+  uploader?: AppUser;
+};
+
+// ─── Saved Report Templates ─────────────────────────────────────────────────
+
+export type ReportTemplateType =
+  | 'client_weekly'
+  | 'client_monthly'
+  | 'internal_health'
+  | 'financial'
+  | 'task_completion'
+  | 'overdue_tasks'
+  | 'milestone'
+  | 'custom';
+
+export type SavedReportTemplate = {
+  id: string;
+  company_id: string;
+  name: string;
+  description: string | null;
+  template_type: ReportTemplateType;
+  filters: ReportFilters;
+  visibility_options: ReportVisibilityOptions;
+  financial_options: ReportFinancialOptions;
+  selected_fields: string[];
+  is_system: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// ─── Report Audit ────────────────────────────────────────────────────────────
+
+export type ReportAuditAction = 'generated' | 'exported_pdf' | 'exported_csv' | 'shared' | 'template_used';
+
+export type ReportAuditEntry = {
+  id: string;
+  company_id: string;
+  user_id: string | null;
+  action: ReportAuditAction;
+  report_type: string | null;
+  filters_used: ReportFilters | null;
+  financial_visibility_enabled: boolean;
+  client_id: string | null;
+  project_ids: string[] | null;
+  export_format: string | null;
+  created_at: string;
+};
+
+// ─── Report Configuration ────────────────────────────────────────────────────
+
+export type ReportFilters = {
+  clientId: string | null;
+  projectIds: string[];
+  taskStatuses: string[];
+  taskPriorities: string[];
+  assigneeIds: string[];
+  dateFrom: string | null;
+  dateTo: string | null;
+  milestoneIds: string[];
+  invoiceStatuses: string[];
+  paymentStatuses: string[];
+};
+
+export type ReportVisibilityOptions = {
+  showCompleted: boolean;
+  showInternal: boolean;
+  showOverdue: boolean;
+  showCancelled: boolean;
+  showComments: boolean;
+  showAttachments: boolean;
+};
+
+export type ReportFinancialOptions = {
+  showFinancialSummary: boolean;
+  showPerTaskFinancials: boolean;
+  showBudgetVsActual: boolean;
+  showWhtDetails: boolean;
+};
+
+// ─── Financial Summary ───────────────────────────────────────────────────────
+
+export type ProjectFinancialSummary = {
+  project_id: string;
+  company_id: string;
+  budget: number | null;
+  invoiced: number;
+  paid: number;
+  outstanding: number;
+  total_expenses: number;
+  total_time_cost: number;
+  estimated_profit: number;
+  profit_margin_percent: number;
+};
+
+// ─── Report Data (assembled for PDF/CSV generation) ──────────────────────────
+
+export type ReportData = {
+  company: CompanySettings;
+  client: Client | null;
+  projects: ProjectWithTotals[];
+  tasks: ReportTask[];
+  milestones: Milestone[];
+  raidEntries: RaidEntry[];
+  financialSummary: ReportFinancialSummaryData | null;
+  filters: ReportFilters;
+  visibility: ReportVisibilityOptions;
+  financials: ReportFinancialOptions;
+  generatedAt: string;
+  generatedBy: string;
+  reportPeriod: { from: string | null; to: string | null };
+  executiveSummary: string | null;
+};
+
+export type ReportTask = {
+  id: string;
+  project_name: string;
+  title: string;
+  assignee: string | null;
+  priority: string;
+  status: string;
+  start_date: string | null;
+  due_date: string | null;
+  progress: number;
+  last_update_summary: string | null;
+  invoice_status: string | null;
+  payment_status: string | null;
+  report_note: string | null;
+  billed_amount: number | null;
+  paid_amount: number | null;
+  balance_amount: number | null;
+};
+
+export type ReportFinancialSummaryData = {
+  totalBudget: number;
+  totalInvoiced: number;
+  totalPaid: number;
+  totalOutstanding: number;
+  totalPendingInvoice: number;
+  totalExpenses: number;
+  estimatedProfitLoss: number;
+  totalWht: number;
+  balanceDue: number;
+};

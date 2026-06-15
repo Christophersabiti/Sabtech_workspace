@@ -11,6 +11,9 @@ export type TaskStatus =
   | 'completed'
   | 'cancelled';
 
+export type TaskInvoiceStatus = 'not_invoiced' | 'pending' | 'invoiced' | 'paid';
+export type TaskPaymentStatus = 'unpaid' | 'partial' | 'paid';
+
 export type EnhancedProjectTask = {
   id: string;
   company_id: string;
@@ -32,6 +35,29 @@ export type EnhancedProjectTask = {
   estimated_hours: number | null;
   task_number: number | null;
   phase: string | null;
+  // PM upgrade fields
+  client_id: string | null;
+  assignee_id: string | null;
+  completed_at: string | null;
+  internal_only: boolean;
+  client_visible: boolean;
+  financial_visible: boolean;
+  invoice_status: TaskInvoiceStatus;
+  payment_status: TaskPaymentStatus;
+  cost_estimate: number | null;
+  actual_cost: number | null;
+  billed_amount: number | null;
+  paid_amount: number | null;
+  balance_amount: number | null;
+  report_note: string | null;
+  last_update_summary: string | null;
+  baseline_start_date: string | null;
+  baseline_due_date: string | null;
+  revised_due_date: string | null;
+  actual_start_date: string | null;
+  actual_completion_date: string | null;
+  is_critical_path: boolean;
+  is_blocker: boolean;
   created_at: string;
   updated_at: string | null;
 };
@@ -135,6 +161,40 @@ export const TASK_PRIORITY_DOT: Record<TaskPriority, string> = {
   high:     'bg-orange-500',
   critical: 'bg-red-500',
 };
+
+// ─── Invoice & Payment status maps ────────────────────────────────────────────
+
+export const TASK_INVOICE_STATUS_LABELS: Record<TaskInvoiceStatus, string> = {
+  not_invoiced: 'Not Invoiced',
+  pending:      'Pending',
+  invoiced:     'Invoiced',
+  paid:         'Paid',
+};
+
+export const TASK_INVOICE_STATUS_COLORS: Record<TaskInvoiceStatus, string> = {
+  not_invoiced: 'bg-gray-100 text-gray-500',
+  pending:      'bg-amber-100 text-amber-600',
+  invoiced:     'bg-blue-100 text-blue-600',
+  paid:         'bg-emerald-100 text-emerald-600',
+};
+
+export const TASK_PAYMENT_STATUS_LABELS: Record<TaskPaymentStatus, string> = {
+  unpaid:  'Unpaid',
+  partial: 'Partial',
+  paid:    'Paid',
+};
+
+export const TASK_PAYMENT_STATUS_COLORS: Record<TaskPaymentStatus, string> = {
+  unpaid:  'bg-red-100 text-red-600',
+  partial: 'bg-amber-100 text-amber-600',
+  paid:    'bg-emerald-100 text-emerald-600',
+};
+
+export const VISIBILITY_LABELS = {
+  internal_only:     { label: 'Internal',        color: 'bg-slate-100 text-slate-600' },
+  client_visible:    { label: 'Client Visible',  color: 'bg-sky-100 text-sky-600' },
+  financial_visible: { label: 'Financial',       color: 'bg-purple-100 text-purple-600' },
+} as const;
 
 // Column color for Gantt & Kanban
 export const KANBAN_COLUMN_COLORS: Record<TaskStatus, string> = {

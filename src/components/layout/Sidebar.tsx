@@ -28,6 +28,8 @@ import {
   Plus,
   Check,
   CalendarDays,
+  FolderKanban,
+  Clock,
 } from 'lucide-react';
 import { useState, useEffect, useMemo, ElementType } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -37,16 +39,18 @@ import { useSidebar } from './SidebarContext';
 import { NavItem } from './NavItem';
 
 const mainNav = [
-  { label: 'Dashboard',   href: '/',            icon: LayoutDashboard },
-  { label: 'Calendar',    href: '/calendar',    icon: CalendarDays },
-  { label: 'Clients',     href: '/clients',      icon: Users },
-  { label: 'Projects',    href: '/projects',     icon: FolderOpen },
-  { label: 'Quotations',  href: '/quotations',   icon: ClipboardList },
-  { label: 'Services',    href: '/services',     icon: Tag },
-  { label: 'Invoices',    href: '/invoices',     icon: FileText },
-  { label: 'Payments',    href: '/payments',     icon: CreditCard },
-  { label: 'Expenses',    href: '/expenses',     icon: ReceiptText },
-  { label: 'Reports',     href: '/reports',      icon: BarChart2 },
+  { label: 'Dashboard',   href: '/',              icon: LayoutDashboard },
+  { label: 'Calendar',    href: '/calendar',      icon: CalendarDays },
+  { label: 'Clients',     href: '/clients',       icon: Users },
+  { label: 'Projects',    href: '/projects',      icon: FolderOpen },
+  { label: 'Portfolios',  href: '/portfolios',    icon: FolderKanban },
+  { label: 'Quotations',  href: '/quotations',    icon: ClipboardList },
+  { label: 'Services',    href: '/services',      icon: Tag },
+  { label: 'Invoices',    href: '/invoices',      icon: FileText },
+  { label: 'Payments',    href: '/payments',      icon: CreditCard },
+  { label: 'Expenses',    href: '/expenses',      icon: ReceiptText },
+  { label: 'Timesheets',  href: '/timesheets',    icon: Clock },
+  { label: 'Reports',     href: '/reports',       icon: BarChart2 },
 ];
 
 const settingsNav = [

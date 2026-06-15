@@ -1,9 +1,9 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { AdminSupabaseConfigError, createAdminSupabase } from '@/lib/platformAdmin';
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
@@ -74,10 +74,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` }, { status: 400 });
   }
 
-  const adminSupabase = createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  );
+  let adminSupabase;
+  try {
+    adminSupabase = createAdminSupabase();
+  } catch (error) {
+    if (error instanceof AdminSupabaseConfigError) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    throw error;
+  }
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const { data: invitation, error: invErr } = await adminSupabase

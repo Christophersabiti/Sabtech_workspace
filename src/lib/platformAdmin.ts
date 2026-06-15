@@ -8,10 +8,64 @@ export type PlatformAdminContext = {
   email: string;
 };
 
+export class AdminSupabaseConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdminSupabaseConfigError';
+  }
+}
+
+function getJwtRole(key: string): string | null {
+  const [, payload] = key.split('.');
+  if (!payload) return null;
+
+  try {
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = Buffer.from(normalized, 'base64').toString('utf8');
+    const parsed = JSON.parse(decoded) as { role?: unknown };
+    return typeof parsed.role === 'string' ? parsed.role : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createAdminSupabase() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl) {
+    throw new AdminSupabaseConfigError('Missing NEXT_PUBLIC_SUPABASE_URL in the server environment.');
+  }
+
+  if (!serviceRoleKey) {
+    throw new AdminSupabaseConfigError(
+      'Missing SUPABASE_SERVICE_ROLE_KEY in the server environment.',
+    );
+  }
+
+  if (anonKey && serviceRoleKey === anonKey) {
+    throw new AdminSupabaseConfigError(
+      'SUPABASE_SERVICE_ROLE_KEY is set to the anon key. Use the Supabase service_role key and redeploy.',
+    );
+  }
+
+  const role = getJwtRole(serviceRoleKey);
+  if (role && role !== 'service_role') {
+    throw new AdminSupabaseConfigError(
+      'SUPABASE_SERVICE_ROLE_KEY is not a service_role key. Update the server environment and redeploy.',
+    );
+  }
+
   return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    serviceRoleKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    },
   );
 }
 
