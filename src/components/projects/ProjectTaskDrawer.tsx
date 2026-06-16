@@ -16,6 +16,7 @@ import {
   TASK_STATUS_DOT,
   TASK_PRIORITY_DOT,
 } from './types';
+import { TaskCommentsSection } from './TaskCommentsSection';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ type Props = {
   open: boolean;
   saving: boolean;
   defaultStatus?: TaskStatus;
+  companyId?: string;
   onClose: () => void;
   onSave: (values: TaskFormValues) => void;
   onDelete?: (id: string) => void;
@@ -140,7 +142,7 @@ function FieldSelect<T extends string>({
 
 // ─── Drawer ───────────────────────────────────────────────────────────────────
 
-export function ProjectTaskDrawer({ task, open, saving, defaultStatus, onClose, onSave, onDelete }: Props) {
+export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId, onClose, onSave, onDelete }: Props) {
   const [form, setForm] = useState<TaskFormValues>(emptyForm(defaultStatus));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -434,6 +436,11 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, onClose, 
           </div>
 
         </form>
+
+        {/* Comments — only for existing tasks */}
+        {!isNew && task && companyId && (
+          <TaskCommentsSection taskId={task.id} companyId={companyId} />
+        )}
 
         {/* Footer */}
         <div className="px-5 py-4 border-t border-gray-100 space-y-2">

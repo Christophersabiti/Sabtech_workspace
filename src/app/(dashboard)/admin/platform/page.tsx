@@ -21,6 +21,7 @@ import {
   Key,
   Trash2,
   Settings,
+  Banknote,
 } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { usePlatformImpersonation } from '@/hooks/usePlatformImpersonation';
@@ -109,6 +110,16 @@ export default function PlatformAdminPage() {
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [createPlanOpen, setCreatePlanOpen] = useState(false);
   const [creatingPlan, setCreatingPlan] = useState(false);
+  const [billingCompany, setBillingCompany] = useState<PlatformCompany | null>(null);
+  const [savingBilling, setSavingBilling] = useState(false);
+  const [billingForm, setBillingForm] = useState({
+    billing_status: 'active',
+    subscription_status: 'active',
+    plan_id: '',
+    current_period_start: '',
+    current_period_end: '',
+    note: '',
+  });
   const [planForm, setPlanForm] = useState({
     key: '',
     name: '',
@@ -159,8 +170,8 @@ export default function PlatformAdminPage() {
   useEffect(() => {
     if (activeTab === 'billing') {
       void loadPesapalConfig();
-      void loadPlans();
     }
+    void loadPlans();
   }, [activeTab, loadPesapalConfig, loadPlans]);
 
   async function savePesapalConfig(e: React.FormEvent) {
@@ -261,6 +272,45 @@ export default function PlatformAdminPage() {
       await syncPackageMetadata();
       void loadPlans();
     }
+  }
+
+  async function openBillingModal(company: PlatformCompany) {
+    setBillingCompany(company);
+    setBillingForm({
+      billing_status: 'active',
+      subscription_status: 'active',
+      plan_id: '',
+      current_period_start: new Date().toISOString().slice(0, 10),
+      current_period_end: '',
+      note: '',
+    });
+  }
+
+  async function saveManualBilling(event: React.FormEvent) {
+    event.preventDefault();
+    if (!billingCompany) return;
+    setSavingBilling(true);
+    const res = await fetch(`/api/platform/companies/${billingCompany.id}/billing`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        billing_status: billingForm.billing_status,
+        subscription_status: billingForm.subscription_status,
+        plan_id: billingForm.plan_id || undefined,
+        current_period_start: billingForm.current_period_start || undefined,
+        current_period_end: billingForm.current_period_end || undefined,
+        note: billingForm.note.trim() || undefined,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setSavingBilling(false);
+    if (!res.ok) {
+      setToast({ type: 'error', message: data.error ?? 'Could not update billing status.' });
+      return;
+    }
+    setBillingCompany(null);
+    setToast({ type: 'success', message: `Billing updated for ${billingCompany.name}.` });
+    await loadCompanies();
   }
 
   const loadCompanies = useCallback(async () => {
@@ -603,6 +653,14 @@ export default function PlatformAdminPage() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => openBillingModal(company)}
+                          className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-100"
+                        >
+                          <Banknote className="h-4 w-4" />
+                          Billing
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setSelectedCompany(company)}
                           className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-900 hover:bg-slate-50"
                         >
@@ -807,6 +865,114 @@ export default function PlatformAdminPage() {
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {billingCompany && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Manual Billing — {billingCompany.name}</h2>
+                <p className="text-sm text-slate-500">Override billing status for offline payments (bank transfer, cash, etc.)</p>
+              </div>
+              <button onClick={() => setBillingCompany(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={saveManualBilling}>
+              <div className="grid gap-4 p-5 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Billing Status</span>
+                  <select
+                    value={billingForm.billing_status}
+                    onChange={(e) => setBillingForm(f => ({ ...f, billing_status: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="active">Active</option>
+                    <option value="trial_active">Trial Active</option>
+                    <option value="trial_expired">Trial Expired</option>
+                    <option value="past_due">Past Due</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="suspended">Suspended</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Subscription Status</span>
+                  <select
+                    value={billingForm.subscription_status}
+                    onChange={(e) => setBillingForm(f => ({ ...f, subscription_status: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="active">Active</option>
+                    <option value="trialing">Trialing</option>
+                    <option value="past_due">Past Due</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="suspended">Suspended</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Assign Plan</span>
+                  <select
+                    value={billingForm.plan_id}
+                    onChange={(e) => setBillingForm(f => ({ ...f, plan_id: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">— Keep current plan —</option>
+                    {plans.map(plan => (
+                      <option key={plan.id} value={plan.id}>{plan.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Period Start</span>
+                  <input
+                    type="date"
+                    value={billingForm.current_period_start}
+                    onChange={(e) => setBillingForm(f => ({ ...f, current_period_start: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Period End / Expiry</span>
+                  <input
+                    type="date"
+                    value={billingForm.current_period_end}
+                    onChange={(e) => setBillingForm(f => ({ ...f, current_period_end: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Note / Reference</span>
+                  <textarea
+                    value={billingForm.note}
+                    onChange={(e) => setBillingForm(f => ({ ...f, note: e.target.value }))}
+                    rows={3}
+                    placeholder="e.g. Bank transfer received — ref TXN-2026-001, confirmed by accounts."
+                    className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+                <p className="md:col-span-2 text-xs text-slate-500">This change is logged with your admin account for audit purposes.</p>
+              </div>
+              <div className="flex gap-3 border-t border-slate-100 p-5">
+                <button
+                  type="button"
+                  onClick={() => setBillingCompany(null)}
+                  className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingBilling}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {savingBilling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
+                  {savingBilling ? 'Saving...' : 'Apply Billing Update'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

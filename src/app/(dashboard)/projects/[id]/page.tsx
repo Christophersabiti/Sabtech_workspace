@@ -1364,6 +1364,7 @@ export default function ProjectProfilePage() {
         open={drawerOpen}
         saving={savingDrawer}
         defaultStatus={drawerDefaultStatus}
+        companyId={activeCompanyId ?? undefined}
         onClose={() => setDrawerOpen(false)}
         onSave={saveTaskFromDrawer}
         onDelete={id => setConfirmDeleteId(id)}
