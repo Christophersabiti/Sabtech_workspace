@@ -97,10 +97,8 @@ export async function PATCH(
     return NextResponse.json({ error: updateErr?.message ?? 'Update failed' }, { status: 500 });
   }
 
-  // Sync update to Google
-  syncEventToGoogle(supabase, updated, [], 'update').catch((e) =>
-    console.error('[calendar/sync update]', e),
-  );
+  // Sync update to Google.
+  await syncEventToGoogle(supabase, updated, [], 'update');
 
   return NextResponse.json({ event: updated });
 }
@@ -133,10 +131,8 @@ export async function DELETE(
     .update({ status: 'cancelled', updated_by: user.id, updated_at: new Date().toISOString() })
     .eq('id', id);
 
-  // Delete from Google Calendar
-  syncEventToGoogle(supabase, existing, [], 'delete').catch((e) =>
-    console.error('[calendar/sync delete]', e),
-  );
+  // Delete from Google Calendar.
+  await syncEventToGoogle(supabase, existing, [], 'delete');
 
   return NextResponse.json({ ok: true });
 }

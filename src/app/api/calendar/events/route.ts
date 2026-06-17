@@ -165,14 +165,14 @@ export async function POST(req: NextRequest) {
     await supabase.from('calendar_reminders').insert(reminderRows);
   }
 
-  // Sync to Google Calendar (fire-and-forget)
+  // Sync before responding so serverless runtimes do not drop the provider write.
   if (body.sync_to_provider !== false) {
-    syncEventToGoogle(
+    await syncEventToGoogle(
       supabase,
       event,
       insertedAttendees as Parameters<typeof syncEventToGoogle>[2],
       'create',
-    ).catch((e) => console.error('[calendar/sync]', e));
+    );
   }
 
   return NextResponse.json({ event }, { status: 201 });

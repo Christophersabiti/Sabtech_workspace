@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminSupabase } from '@/lib/platformAdmin';
 import { getUserBusyBlocks } from '@/lib/calendar/availabilityService';
+import { syncEventToGoogle } from '@/lib/calendar/calendarSync';
+import type { CalendarEvent, CalendarEventAttendee, EventType } from '@/types/calendar';
 
 type BookingLinkRow = {
   id: string;
@@ -21,13 +23,13 @@ type BookingLinkRow = {
   is_active: boolean;
 };
 
-// GET /api/booking/[slug]?date=YYYY-MM-DD  — returns link info + available slots for date
+// GET /api/booking/[slug]?date=YYYY-MM-DD - returns link info + available slots for date
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
-  const supabase  = await createClient();
+  const supabase = createAdminSupabase();
 
   const { data: link, error } = await supabase
     .from('booking_links')
@@ -44,17 +46,24 @@ export async function GET(
     return NextResponse.json({ link: sanitizeLink(bLink) });
   }
 
-  // Compute available slots for the requested date
+  // Compute available slots for the requested date.
   const dayStart = new Date(`${dateParam}T00:00:00Z`);
-  const dayEnd   = new Date(`${dateParam}T23:59:59Z`);
+  const dayEnd = new Date(`${dateParam}T23:59:59Z`);
+
+  if (Number.isNaN(dayStart.getTime()) || Number.isNaN(dayEnd.getTime())) {
+    return NextResponse.json({ error: 'Invalid date value' }, { status: 400 });
+  }
 
   const busyBlocks = await getUserBusyBlocks(
-    supabase, bLink.user_id, bLink.company_id,
-    dayStart.toISOString(), dayEnd.toISOString(),
+    supabase,
+    bLink.user_id,
+    bLink.company_id,
+    dayStart.toISOString(),
+    dayEnd.toISOString(),
     bLink.user_id,
   );
 
-  // Also include already-confirmed booking_slots for this link on this date
+  // Also include already-confirmed booking slots for this link on this date.
   const { data: bookedSlots } = await supabase
     .from('booking_slots')
     .select('start_at, end_at')
@@ -66,11 +75,11 @@ export async function GET(
   const allBusy = [
     ...busyBlocks.map((b) => ({ start: b.start, end: b.end })),
     ...(bookedSlots ?? []).map((b: { start_at: string; end_at: string }) => ({
-      start: b.start_at, end: b.end_at,
+      start: b.start_at,
+      end: b.end_at,
     })),
   ].sort((a, b) => a.start.localeCompare(b.start));
 
-  // Build working hour slots (default 9:00–17:00 if no availability settings)
   const { data: avail } = await supabase
     .from('user_availability_settings')
     .select('working_hours, buffer_before_minutes, buffer_after_minutes')
@@ -78,43 +87,45 @@ export async function GET(
     .eq('company_id', bLink.company_id)
     .maybeSingle();
 
-  const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'] as const;
-  const wh = avail?.working_hours?.[dayNames[dayStart.getDay()]] as { enabled?: boolean; start?: string; end?: string } | undefined;
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+  const wh = avail?.working_hours?.[dayNames[dayStart.getDay()]] as
+    | { enabled?: boolean; start?: string; end?: string }
+    | undefined;
 
   if (!wh?.enabled) {
     return NextResponse.json({ link: sanitizeLink(bLink), slots: [] });
   }
 
   const workStart = parseHHMM(wh.start ?? '09:00', dayStart);
-  const workEnd   = parseHHMM(wh.end   ?? '17:00', dayStart);
-  const dur       = bLink.duration_minutes * 60 * 1000;
-  const buf       = (bLink.buffer_minutes + (avail?.buffer_after_minutes ?? 0)) * 60 * 1000;
+  const workEnd = parseHHMM(wh.end ?? '17:00', dayStart);
+  const dur = bLink.duration_minutes * 60 * 1000;
+  const buf = (bLink.buffer_minutes + (avail?.buffer_after_minutes ?? 0)) * 60 * 1000;
 
   const slots: Array<{ start: string; end: string }> = [];
   let cursor = workStart.getTime();
 
-  // Merge busy intervals
   const merged: Array<{ s: number; e: number }> = [];
   for (const b of allBusy) {
     const s = new Date(b.start).getTime();
     const e = new Date(b.end).getTime();
     if (merged.length && s <= merged[merged.length - 1].e) {
       merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, e);
-    } else merged.push({ s, e });
+    } else {
+      merged.push({ s, e });
+    }
   }
 
   for (const iv of [...merged, { s: workEnd.getTime(), e: workEnd.getTime() }]) {
     while (cursor + dur <= iv.s && cursor + dur <= workEnd.getTime()) {
       slots.push({
         start: new Date(cursor).toISOString(),
-        end:   new Date(cursor + dur).toISOString(),
+        end: new Date(cursor + dur).toISOString(),
       });
       cursor += dur + buf;
     }
     cursor = Math.max(cursor, iv.e);
   }
 
-  // Check max_bookings_per_day
   if (bLink.max_bookings_per_day) {
     const { count } = await supabase
       .from('booking_slots')
@@ -123,6 +134,7 @@ export async function GET(
       .in('status', ['confirmed', 'pending_approval'])
       .gte('start_at', dayStart.toISOString())
       .lte('end_at', dayEnd.toISOString());
+
     if ((count ?? 0) >= bLink.max_bookings_per_day) {
       return NextResponse.json({ link: sanitizeLink(bLink), slots: [] });
     }
@@ -131,13 +143,13 @@ export async function GET(
   return NextResponse.json({ link: sanitizeLink(bLink), slots: slots.slice(0, 20) });
 }
 
-// POST /api/booking/[slug] — create a booking
+// POST /api/booking/[slug] - create a booking
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
-  const supabase  = await createClient();
+  const supabase = createAdminSupabase();
 
   const { data: link } = await supabase
     .from('booking_links')
@@ -161,58 +173,89 @@ export async function POST(
     return NextResponse.json({ error: 'start_at, guest_name, and guest_email are required' }, { status: 400 });
   }
 
-  const endAt = new Date(new Date(body.start_at).getTime() + bLink.duration_minutes * 60 * 1000).toISOString();
+  const guestName = body.guest_name.trim();
+  const guestEmail = body.guest_email.trim().toLowerCase();
+  if (!guestName) {
+    return NextResponse.json({ error: 'Guest name is required' }, { status: 400 });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) {
+    return NextResponse.json({ error: 'A valid guest email is required' }, { status: 400 });
+  }
 
-  // Create calendar event for the host
+  const startDate = new Date(body.start_at);
+  if (Number.isNaN(startDate.getTime())) {
+    return NextResponse.json({ error: 'Invalid start_at value' }, { status: 400 });
+  }
+
+  const endAt = new Date(startDate.getTime() + bLink.duration_minutes * 60 * 1000).toISOString();
   const now = new Date().toISOString();
-  const { data: calEvent } = await supabase
+
+  const { data: calEvent, error: calEventErr } = await supabase
     .from('calendar_events')
     .insert({
       company_id:  bLink.company_id,
       user_id:     bLink.user_id,
-      title:       `${bLink.title} — ${body.guest_name}`,
+      title:       `${bLink.title} - ${guestName}`,
       description: body.guest_notes ?? null,
       start_at:    body.start_at,
       end_at:      endAt,
       timezone:    bLink.timezone,
       location:    bLink.location_type === 'in_person' ? (bLink.location_value ?? null) : null,
-      event_type:  bLink.event_type as 'consultation',
-      status:      bLink.require_approval ? 'scheduled' : 'scheduled',
+      event_type:  bLink.event_type as EventType,
+      status:      'scheduled',
       visibility:  'private' as const,
       provider:    'internal' as const,
       source:      'internal' as const,
       created_by:  bLink.user_id,
+      updated_by:  bLink.user_id,
       created_at:  now,
       updated_at:  now,
     })
-    .select('id')
+    .select('*')
     .single();
 
-  // Add guest as attendee
-  if (calEvent) {
-    await supabase.from('calendar_event_attendees').insert({
+  if (calEventErr || !calEvent) {
+    console.error('[booking] calendar event insert failed', calEventErr);
+    return NextResponse.json(
+      { error: calEventErr?.message ?? 'Failed to create calendar event' },
+      { status: 500 },
+    );
+  }
+
+  const { data: attendee, error: attendeeErr } = await supabase
+    .from('calendar_event_attendees')
+    .insert({
       event_id:      calEvent.id,
       company_id:    bLink.company_id,
-      email:         body.guest_email,
-      name:          body.guest_name,
+      email:         guestEmail,
+      name:          guestName,
       attendee_type: 'external',
       is_organizer:  false,
       rsvp_status:   'accepted',
-    });
+    })
+    .select('*')
+    .single();
+
+  if (attendeeErr || !attendee) {
+    console.error('[booking] attendee insert failed', attendeeErr);
+    await supabase.from('calendar_events').delete().eq('id', calEvent.id);
+    return NextResponse.json(
+      { error: attendeeErr?.message ?? 'Failed to create booking attendee' },
+      { status: 500 },
+    );
   }
 
-  // Create booking slot
   const { data: slot, error: slotErr } = await supabase
     .from('booking_slots')
     .insert({
       booking_link_id:   bLink.id,
       company_id:        bLink.company_id,
       host_user_id:      bLink.user_id,
-      calendar_event_id: calEvent?.id ?? null,
+      calendar_event_id: calEvent.id,
       start_at:          body.start_at,
       end_at:            endAt,
-      guest_name:        body.guest_name,
-      guest_email:       body.guest_email,
+      guest_name:        guestName,
+      guest_email:       guestEmail,
       guest_notes:       body.guest_notes ?? null,
       custom_answers:    body.custom_answers ?? {},
       status:            bLink.require_approval ? 'pending_approval' : 'confirmed',
@@ -221,11 +264,20 @@ export async function POST(
     .single();
 
   if (slotErr || !slot) {
+    await supabase.from('calendar_events').delete().eq('id', calEvent.id);
     return NextResponse.json({ error: slotErr?.message ?? 'Booking failed' }, { status: 500 });
   }
 
+  const syncResult = await syncEventToGoogle(
+    supabase,
+    calEvent as CalendarEvent,
+    [attendee as CalendarEventAttendee],
+    'create',
+  );
+
   return NextResponse.json({
     ok: true,
+    calendar_sync_status: syncResult.status,
     booking: {
       id:           slot.id,
       cancel_token: slot.cancel_token,

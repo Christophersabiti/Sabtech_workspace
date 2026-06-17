@@ -216,7 +216,8 @@ export async function listGoogleEvents(
     syncToken?: string;
   } = {},
 ): Promise<GoogleCalendarListResult> {
-  const params = new URLSearchParams({ singleEvents: 'true', orderBy: 'startTime' });
+  const params = new URLSearchParams({ singleEvents: 'true' });
+  if (!options.syncToken) params.set('orderBy', 'startTime');
   if (options.timeMin)    params.set('timeMin', options.timeMin);
   if (options.timeMax)    params.set('timeMax', options.timeMax);
   if (options.maxResults) params.set('maxResults', String(options.maxResults));

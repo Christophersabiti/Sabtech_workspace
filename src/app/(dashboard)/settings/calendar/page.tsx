@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { CheckCircle2, AlertCircle, ArrowLeft, Clock, Save } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
-import { CalendarConnectionCard } from '@/components/calendar/CalendarConnectionCard';
+import { CalendarConnectionCard, type CalendarSyncResult } from '@/components/calendar/CalendarConnectionCard';
 import { BookingLinkManager } from '@/components/calendar/BookingLinkManager';
 import type { CalendarConnection, SyncDirection, ImportMode } from '@/types/calendar';
 
@@ -157,14 +157,14 @@ export default function CalendarSettingsPage() {
     }
   }
 
-  async function handleSync(provider: 'google' | 'microsoft') {
+  async function handleSync(): Promise<CalendarSyncResult> {
     if (!activeCompanyId) return { synced: 0, failed: 0 };
     const res = await fetch('/api/calendar/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ company_id: activeCompanyId }),
     });
-    if (res.ok) return res.json() as Promise<{ synced: number; failed: number }>;
+    if (res.ok) return res.json() as Promise<CalendarSyncResult>;
     return { synced: 0, failed: 0 };
   }
 
@@ -266,7 +266,7 @@ export default function CalendarSettingsPage() {
               companyId={activeCompanyId ?? ''}
               onConnect={() => handleConnect('google')}
               onDisconnect={() => handleDisconnect('google')}
-              onSync={() => handleSync('google')}
+              onSync={handleSync}
               onUpdateSettings={(s) => handleUpdateSettings('google', s)}
             />
             <CalendarConnectionCard
@@ -275,7 +275,7 @@ export default function CalendarSettingsPage() {
               companyId={activeCompanyId ?? ''}
               onConnect={() => handleConnect('microsoft')}
               onDisconnect={() => handleDisconnect('microsoft')}
-              onSync={() => handleSync('microsoft')}
+              onSync={handleSync}
               onUpdateSettings={(s) => handleUpdateSettings('microsoft', s)}
             />
           </div>

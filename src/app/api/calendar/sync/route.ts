@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { syncEventToGoogle } from '@/lib/calendar/calendarSync';
+import { importFromGoogle } from '@/lib/calendar/googleImport';
 
-// POST /api/calendar/sync — manually re-sync unsynced events to Google Calendar
+// POST /api/calendar/sync - push pending workspace events and pull Google changes when enabled.
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -29,14 +30,46 @@ export async function POST(req: NextRequest) {
 
   let synced = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const event of events ?? []) {
     const operation = event.provider_event_id ? 'update' : 'create';
-    try {
-      await syncEventToGoogle(supabase, event, event.attendees ?? [], operation);
+    const result = await syncEventToGoogle(supabase, event, event.attendees ?? [], operation);
+    if (result.status === 'success') {
       synced++;
-    } catch {
+    } else if (result.status === 'error') {
       failed++;
+    } else {
+      skipped++;
+    }
+  }
+
+  let imported = 0;
+  let updated = 0;
+  let deleted = 0;
+  let importError: string | undefined;
+
+  if (!body.event_id) {
+    const { data: conn } = await supabase
+      .from('calendar_connections')
+      .select('id, sync_enabled, sync_direction, import_mode')
+      .eq('company_id', body.company_id)
+      .eq('user_id', user.id)
+      .eq('provider', 'google')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (
+      conn?.sync_enabled &&
+      conn.sync_direction !== 'outbound' &&
+      conn.import_mode !== 'none'
+    ) {
+      const importResult = await importFromGoogle(supabase, conn.id as string);
+      imported = importResult.imported;
+      updated = importResult.updated;
+      deleted = importResult.deleted;
+      importError = importResult.error;
+      if (importError) failed++;
     }
   }
 
@@ -48,5 +81,14 @@ export async function POST(req: NextRequest) {
     .eq('user_id', user.id)
     .eq('provider', 'google');
 
-  return NextResponse.json({ ok: true, synced, failed });
+  return NextResponse.json({
+    ok: true,
+    synced,
+    failed,
+    skipped,
+    imported,
+    updated,
+    deleted,
+    importError,
+  });
 }

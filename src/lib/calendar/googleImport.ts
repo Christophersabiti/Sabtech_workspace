@@ -52,7 +52,7 @@ function rsvpStatus(resp: string | undefined): string {
 export async function importFromGoogle(
   supabase: SupabaseClient,
   connectionId: string,
-): Promise<{ imported: number; updated: number; deleted: number; error?: string }> {
+): Promise<{ imported: number; updated: number; deleted: number; error?: string; skipped?: boolean; reason?: string }> {
   const { data: conn } = await supabase
     .from('calendar_connections')
     .select('*')
@@ -62,6 +62,12 @@ export async function importFromGoogle(
     .maybeSingle();
 
   if (!conn) return { imported: 0, updated: 0, deleted: 0, error: 'Connection not found' };
+  if (!conn.sync_enabled) {
+    return { imported: 0, updated: 0, deleted: 0, skipped: true, reason: 'Calendar sync is disabled' };
+  }
+  if (conn.sync_direction === 'outbound') {
+    return { imported: 0, updated: 0, deleted: 0, skipped: true, reason: 'Inbound sync is disabled for this connection' };
+  }
   if (conn.import_mode === 'none') return { imported: 0, updated: 0, deleted: 0 };
 
   let accessToken: string;

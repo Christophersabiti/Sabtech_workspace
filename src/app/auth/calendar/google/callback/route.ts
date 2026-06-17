@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { exchangeGoogleCode, getGoogleUserEmail } from '@/lib/calendar/googleCalendar';
+import { exchangeGoogleCode, getGoogleUserEmail, watchGoogleCalendar } from '@/lib/calendar/googleCalendar';
 import { encryptToken } from '@/lib/calendar/tokenEncryption';
+import { importFromGoogle } from '@/lib/calendar/googleImport';
+import { randomUUID } from 'crypto';
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient();
@@ -47,8 +49,33 @@ export async function GET(req: NextRequest) {
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
     const email = await getGoogleUserEmail(tokens.access_token);
+    const webhookFields: {
+      webhook_channel_id?: string;
+      webhook_resource_id?: string;
+      webhook_expiry?: string | null;
+    } = {};
 
-    const { error: upsertErr } = await supabase
+    if (req.nextUrl.protocol === 'https:') {
+      try {
+        const channelId = `google-${randomUUID()}`;
+        const watch = await watchGoogleCalendar(
+          tokens.access_token,
+          'primary',
+          channelId,
+          `${req.nextUrl.origin}/api/calendar/webhook/google`,
+        );
+        const expirationMs = Number(watch.expiration);
+        webhookFields.webhook_channel_id = channelId;
+        webhookFields.webhook_resource_id = watch.resourceId;
+        webhookFields.webhook_expiry = Number.isFinite(expirationMs)
+          ? new Date(expirationMs).toISOString()
+          : null;
+      } catch (watchErr) {
+        console.error('[calendar/google/watch]', watchErr);
+      }
+    }
+
+    const { data: connection, error: upsertErr } = await supabase
       .from('calendar_connections')
       .upsert(
         {
@@ -61,17 +88,25 @@ export async function GET(req: NextRequest) {
           ...(refreshTokenEnc ? { refresh_token_encrypted: refreshTokenEnc } : {}),
           token_expires_at:       expiresAt,
           sync_enabled:           true,
-          sync_direction:         'outbound',
-          import_mode:            'new_only',
+          sync_direction:         'both',
+          import_mode:            'from_today',
           is_active:              true,
+          ...webhookFields,
           updated_at:             new Date().toISOString(),
         },
         { onConflict: 'company_id,user_id,provider' },
-      );
+      )
+      .select('id')
+      .single();
 
     if (upsertErr) {
       settingsUrl.searchParams.set('error', 'db_error');
       return NextResponse.redirect(settingsUrl);
+    }
+
+    if (connection?.id) {
+      const importResult = await importFromGoogle(supabase, connection.id as string);
+      if (importResult.error) console.error('[calendar/google/initial-import]', importResult.error);
     }
 
     settingsUrl.searchParams.set('connected', 'google');

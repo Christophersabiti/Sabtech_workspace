@@ -1,5 +1,5 @@
-// Calendar sync service — pushes Sabtech events to external providers
-// Phase 1: Google Calendar outbound sync only.
+// Calendar sync service: pushes Sabtech events to external providers.
+// Phase 1: Google Calendar outbound sync.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { decryptToken, encryptToken } from './tokenEncryption';
@@ -25,6 +25,13 @@ type Connection = {
   sync_direction: string;
 };
 
+export type GoogleEventSyncResult = {
+  status: 'success' | 'error' | 'skipped';
+  providerEventId?: string;
+  error?: string;
+  reason?: string;
+};
+
 /**
  * Returns a valid (possibly refreshed) access token for a connection.
  * Updates the stored token in DB if refreshed.
@@ -42,7 +49,7 @@ export async function getValidAccessToken(
   }
 
   if (!conn.refresh_token_encrypted) {
-    throw new Error('No refresh token available — user must reconnect their calendar');
+    throw new Error('No refresh token available; user must reconnect their calendar');
   }
 
   const refreshToken = decryptToken(conn.refresh_token_encrypted);
@@ -125,8 +132,7 @@ export async function syncEventToGoogle(
   event: CalendarEvent,
   attendees: CalendarEventAttendee[],
   operation: 'create' | 'update' | 'delete',
-): Promise<void> {
-  // Find active outbound Google connection for this user + company
+): Promise<GoogleEventSyncResult> {
   const { data: conn, error: connErr } = await supabase
     .from('calendar_connections')
     .select(
@@ -139,16 +145,32 @@ export async function syncEventToGoogle(
     .eq('sync_enabled', true)
     .maybeSingle();
 
-  if (connErr || !conn) return; // no active connection — skip silently
-  if (conn.sync_direction === 'inbound') return; // outbound not enabled
+  if (connErr) {
+    const msg = connErr.message;
+    await supabase
+      .from('calendar_events')
+      .update({ provider_sync_status: 'error' })
+      .eq('id', event.id);
+    return { status: 'error', error: msg };
+  }
+
+  if (!conn) {
+    return { status: 'skipped', reason: 'No active Google Calendar connection' };
+  }
+
+  if (conn.sync_direction === 'inbound') {
+    return { status: 'skipped', reason: 'Outbound sync is disabled for this connection' };
+  }
 
   const calendarId = conn.provider_calendar_id ?? 'primary';
+  const effectiveOperation =
+    operation === 'update' && !event.provider_event_id ? 'create' : operation;
 
   try {
     const accessToken = await getValidAccessToken(supabase, conn as Connection);
     let providerEventId: string | undefined;
 
-    if (operation === 'create') {
+    if (effectiveOperation === 'create') {
       const body = buildGoogleEventBody(event, attendees);
       const result = await createGoogleEvent(accessToken, calendarId, body, false);
       providerEventId = result.id;
@@ -163,7 +185,7 @@ export async function syncEventToGoogle(
           meet_link:            result.hangoutLink ?? event.meet_link,
         })
         .eq('id', event.id);
-    } else if (operation === 'update' && event.provider_event_id) {
+    } else if (effectiveOperation === 'update' && event.provider_event_id) {
       const body = buildGoogleEventBody(event, attendees);
       await updateGoogleEvent(accessToken, calendarId, event.provider_event_id, body);
       providerEventId = event.provider_event_id;
@@ -175,21 +197,25 @@ export async function syncEventToGoogle(
           provider_synced_at:   new Date().toISOString(),
         })
         .eq('id', event.id);
-    } else if (operation === 'delete' && event.provider_event_id) {
+    } else if (effectiveOperation === 'delete' && event.provider_event_id) {
       await deleteGoogleEvent(accessToken, calendarId, event.provider_event_id);
       providerEventId = event.provider_event_id;
+    } else {
+      return { status: 'skipped', reason: 'No Google event id to sync' };
     }
 
     await logSync(supabase, {
-      company_id:       event.company_id,
-      user_id:          event.user_id,
-      connection_id:    conn.id,
-      event_id:         event.id,
-      provider:         'google',
-      operation,
-      status:           'success',
+      company_id:        event.company_id,
+      user_id:           event.user_id,
+      connection_id:     conn.id,
+      event_id:          event.id,
+      provider:          'google',
+      operation:         effectiveOperation,
+      status:            'success',
       provider_event_id: providerEventId,
     });
+
+    return { status: 'success', providerEventId };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
 
@@ -204,9 +230,11 @@ export async function syncEventToGoogle(
       connection_id: conn.id,
       event_id:      event.id,
       provider:      'google',
-      operation,
+      operation:     effectiveOperation,
       status:        'error',
       error_message: msg,
     });
+
+    return { status: 'error', error: msg };
   }
 }
