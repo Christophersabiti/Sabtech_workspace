@@ -30,6 +30,7 @@ import {
   FolderOpen,
   AlertCircle,
   FileDown,
+  Download,
 } from 'lucide-react';
 
 type Tab = 'overview' | 'details' | 'projects' | 'invoices' | 'payments' | 'statement';
@@ -958,6 +959,13 @@ export default function ClientProfilePage() {
             >
               <FileDown className="h-4 w-4" />
               Save as PDF
+            </a>
+            <a
+              href={`/api/clients/${client.id}/statement-csv`}
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-2.5 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100"
+            >
+              <Download className="h-4 w-4" />
+              Download CSV
             </a>
           </div>
 
