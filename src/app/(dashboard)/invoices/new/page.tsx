@@ -6,11 +6,11 @@ import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { useEntitlements } from '@/hooks/useEntitlements';
 import { FeatureBlockedState } from '@/components/billing/FeatureBlockedState';
-import { Client, InvoiceSchedule, Project, Service, WhtTreatment, WhtTaxableBaseType } from '@/types';
+import { Client, InvoiceSchedule, Project, ProjectTask, Service, WhtTreatment, WhtTaxableBaseType } from '@/types';
 import { formatCurrency, calculateLineTotal } from '@/lib/utils';
 import { computeWHT, WHT_TREATMENT_LABELS, WHT_BASE_LABELS } from '@/lib/whtUtils';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Plus, Trash2, ArrowLeft } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, ListChecks, X } from 'lucide-react';
 
 type LineItem = {
   id: string;
@@ -22,6 +22,8 @@ type LineItem = {
   discount_percent: number;
   tax_percent: number;
 };
+
+type ImportableTask = Pick<ProjectTask, 'id' | 'title' | 'description' | 'phase' | 'status' | 'is_billable' | 'estimated_hours' | 'task_number'>;
 
 type SchedulePrefill = InvoiceSchedule & {
   project?: {
@@ -74,6 +76,14 @@ function NewInvoiceForm() {
   }]);
 
   const [discountAmount, setDiscountAmount] = useState(0);
+
+  // Task import modal state
+  const [showTasksModal, setShowTasksModal] = useState(false);
+  const [projectTasks, setProjectTasks] = useState<ImportableTask[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [taskImportQty, setTaskImportQty] = useState<Record<string, number>>({});
+  const [taskImportPrice, setTaskImportPrice] = useState<Record<string, number>>({});
 
   // WHT state
   const [whtSettings, setWhtSettings] = useState({
@@ -275,6 +285,43 @@ function NewInvoiceForm() {
     }));
   }
 
+  async function openTasksModal() {
+    if (!header.project_id || !activeCompanyId) return;
+    setShowTasksModal(true);
+    setLoadingTasks(true);
+    setSelectedTaskIds(new Set());
+    setTaskImportQty({});
+    setTaskImportPrice({});
+    const { data } = await supabase
+      .from('project_tasks')
+      .select('id, title, description, phase, status, is_billable, estimated_hours, task_number')
+      .eq('project_id', header.project_id)
+      .eq('company_id', activeCompanyId)
+      .neq('status', 'cancelled')
+      .order('task_number', { ascending: true });
+    setProjectTasks(data || []);
+    setLoadingTasks(false);
+  }
+
+  function importSelectedTasks() {
+    const tasksToImport = projectTasks.filter(t => selectedTaskIds.has(t.id));
+    const newItems: LineItem[] = tasksToImport.map(task => ({
+      id: genId(),
+      service_id: '',
+      item_name: task.title,
+      description: task.description || '',
+      quantity: taskImportQty[task.id] ?? (task.estimated_hours ?? 1),
+      unit_price: taskImportPrice[task.id] ?? 0,
+      discount_percent: 0,
+      tax_percent: 0,
+    }));
+    setItems(prev => {
+      const hasOnlyEmpty = prev.length === 1 && !prev[0].item_name.trim() && prev[0].unit_price === 0;
+      return hasOnlyEmpty ? newItems : [...prev, ...newItems];
+    });
+    setShowTasksModal(false);
+  }
+
   // Calculations
   const subtotal = items.reduce((s, item) => s + calculateLineTotal(item.quantity, item.unit_price, item.discount_percent), 0);
   const taxTotal = items.reduce((s, item) => {
@@ -416,7 +463,7 @@ function NewInvoiceForm() {
   }
 
   return (
-    <div>
+    <>
       <div className="mb-6">
         <button onClick={() => router.back()} className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 mb-4">
           <ArrowLeft className="h-4 w-4" /> Back
@@ -480,9 +527,19 @@ function NewInvoiceForm() {
           <div className="bg-white border border-slate-200 rounded-xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Line Items</h2>
-              <button onClick={addItem} className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium">
-                <Plus className="h-4 w-4" /> Add Row
-              </button>
+              <div className="flex items-center gap-3">
+                {header.project_id && (
+                  <button
+                    onClick={openTasksModal}
+                    className="inline-flex items-center gap-1.5 text-sm text-emerald-600 hover:text-emerald-800 font-medium"
+                  >
+                    <ListChecks className="h-4 w-4" /> Import Tasks
+                  </button>
+                )}
+                <button onClick={addItem} className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium">
+                  <Plus className="h-4 w-4" /> Add Row
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -779,7 +836,124 @@ function NewInvoiceForm() {
           </div>
         </div>
       </div>
-    </div>
+      {/* Import Tasks Modal */}
+      {showTasksModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={e => { if (e.target === e.currentTarget) setShowTasksModal(false); }}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col mx-4">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+            <h2 className="text-base font-semibold text-slate-800">Import Tasks from Project</h2>
+            <button onClick={() => setShowTasksModal(false)} className="text-slate-400 hover:text-slate-600">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {loadingTasks ? (
+            <div className="flex-1 flex items-center justify-center py-16 text-slate-400 text-sm">Loading tasks…</div>
+          ) : projectTasks.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center py-16 text-slate-400 text-sm">No tasks found for this project.</div>
+          ) : (
+            <div className="flex-1 overflow-y-auto">
+              <div className="px-6 py-3 border-b border-slate-100 flex items-center gap-3 sticky top-0 bg-white z-10">
+                <input
+                  type="checkbox"
+                  id="select-all-tasks"
+                  checked={selectedTaskIds.size === projectTasks.length}
+                  onChange={e => setSelectedTaskIds(e.target.checked ? new Set(projectTasks.map(t => t.id)) : new Set())}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                <label htmlFor="select-all-tasks" className="text-sm text-slate-600 font-medium select-none cursor-pointer">
+                  Select all ({projectTasks.length})
+                </label>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-100">
+                  <tr>
+                    <th className="px-4 py-2 w-10"></th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Task</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 w-20">Qty</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 w-32">Unit Price</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {projectTasks.map(task => {
+                    const checked = selectedTaskIds.has(task.id);
+                    return (
+                      <tr key={task.id} className={checked ? 'bg-blue-50/40' : 'hover:bg-slate-50'}>
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={e => {
+                              const next = new Set(selectedTaskIds);
+                              if (e.target.checked) next.add(task.id); else next.delete(task.id);
+                              setSelectedTaskIds(next);
+                            }}
+                            className="h-4 w-4 rounded border-slate-300"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-slate-800 leading-snug">{task.title}</div>
+                          {(task.phase || task.description) && (
+                            <div className="text-xs text-slate-400 mt-0.5 truncate max-w-sm">
+                              {task.phase && <span className="text-blue-500 font-medium mr-1">[{task.phase}]</span>}
+                              {task.description}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={taskImportQty[task.id] ?? (task.estimated_hours ?? 1)}
+                            onChange={e => setTaskImportQty(prev => ({ ...prev, [task.id]: parseFloat(e.target.value) || 0 }))}
+                            disabled={!checked}
+                            className="border border-slate-200 rounded px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40 disabled:bg-slate-50"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={taskImportPrice[task.id] ?? 0}
+                            onChange={e => setTaskImportPrice(prev => ({ ...prev, [task.id]: parseFloat(e.target.value) || 0 }))}
+                            disabled={!checked}
+                            className="border border-slate-200 rounded px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-40 disabled:bg-slate-50"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between">
+            <span className="text-sm text-slate-500">
+              {selectedTaskIds.size} task{selectedTaskIds.size !== 1 ? 's' : ''} selected
+            </span>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowTasksModal(false)}
+                className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={importSelectedTasks}
+                disabled={selectedTaskIds.size === 0}
+                className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              >
+                Import {selectedTaskIds.size > 0 ? `${selectedTaskIds.size} Task${selectedTaskIds.size !== 1 ? 's' : ''}` : 'Tasks'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      )}
+    </>
   );
 }
 
