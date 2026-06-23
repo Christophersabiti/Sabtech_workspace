@@ -17,6 +17,7 @@ import {
   TASK_PRIORITY_DOT,
 } from './types';
 import { TaskCommentsSection } from './TaskCommentsSection';
+import { AttachmentsSection } from './AttachmentsSection';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -436,6 +437,17 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId
           </div>
 
         </form>
+
+        {/* Attachments — only for existing tasks */}
+        {!isNew && task && companyId && (
+          <AttachmentsSection
+            entityId={task.id}
+            companyId={companyId}
+            storageFolder={`${companyId}/tasks/${task.id}`}
+            apiBase="/api/task-attachments"
+            entityParam="taskId"
+          />
+        )}
 
         {/* Comments — only for existing tasks */}
         {!isNew && task && companyId && (

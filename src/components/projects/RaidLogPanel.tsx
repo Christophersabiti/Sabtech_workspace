@@ -5,6 +5,7 @@ import {
   Shield, Plus, AlertTriangle, Info, CheckCircle2, Lightbulb,
   ChevronDown, ChevronRight, Eye, EyeOff, X,
 } from 'lucide-react';
+import { AttachmentsSection } from './AttachmentsSection';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import type { RaidEntry, RaidType, RaidSeverity, RaidStatus } from '@/types';
@@ -241,30 +242,43 @@ export default function RaidLogPanel({ projectId, entries, onRefresh }: Props) {
                 </span>
               </button>
               {isExpanded && (
-                <div className="px-4 pb-3 border-t border-slate-100 bg-slate-50/50 space-y-2">
-                  {entry.description && <p className="text-sm text-slate-600">{entry.description}</p>}
-                  {entry.mitigation && (
-                    <div className="text-xs text-slate-500">
-                      <strong>Mitigation:</strong> {entry.mitigation}
-                    </div>
-                  )}
-                  {entry.resolution_note && (
-                    <div className="text-xs text-emerald-600">
-                      <strong>Resolution:</strong> {entry.resolution_note}
-                    </div>
-                  )}
-                  <div className="flex gap-2 flex-wrap">
-                    {entry.status === 'open' && (
-                      <button onClick={() => updateStatus(entry.id, 'in_progress')} className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 cursor-pointer">In Progress</button>
+                <div className="border-t border-slate-100 bg-slate-50/50">
+                  <div className="px-4 pt-3 space-y-2">
+                    {entry.description && <p className="text-sm text-slate-600">{entry.description}</p>}
+                    {entry.mitigation && (
+                      <div className="text-xs text-slate-500">
+                        <strong>Mitigation:</strong> {entry.mitigation}
+                      </div>
                     )}
-                    {['open', 'in_progress'].includes(entry.status) && (
-                      <>
-                        <button onClick={() => updateStatus(entry.id, 'mitigated')} className="px-3 py-1 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 cursor-pointer">Mitigated</button>
-                        <button onClick={() => updateStatus(entry.id, 'resolved')} className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 cursor-pointer">Resolved</button>
-                        <button onClick={() => updateStatus(entry.id, 'closed')} className="px-3 py-1 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer">Close</button>
-                      </>
+                    {entry.resolution_note && (
+                      <div className="text-xs text-emerald-600">
+                        <strong>Resolution:</strong> {entry.resolution_note}
+                      </div>
                     )}
+                    <div className="flex gap-2 flex-wrap pb-2">
+                      {entry.status === 'open' && (
+                        <button onClick={() => updateStatus(entry.id, 'in_progress')} className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 cursor-pointer">In Progress</button>
+                      )}
+                      {['open', 'in_progress'].includes(entry.status) && (
+                        <>
+                          <button onClick={() => updateStatus(entry.id, 'mitigated')} className="px-3 py-1 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 cursor-pointer">Mitigated</button>
+                          <button onClick={() => updateStatus(entry.id, 'resolved')} className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 cursor-pointer">Resolved</button>
+                          <button onClick={() => updateStatus(entry.id, 'closed')} className="px-3 py-1 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer">Close</button>
+                        </>
+                      )}
+                    </div>
                   </div>
+                  {/* Evidence attachments for this RAID entry */}
+                  {activeCompanyId && (
+                    <AttachmentsSection
+                      entityId={entry.id}
+                      companyId={activeCompanyId}
+                      storageFolder={`${activeCompanyId}/raid/${entry.id}`}
+                      apiBase="/api/raid-attachments"
+                      entityParam="raidId"
+                    />
+                  )}
+                  <div className="pb-1" />
                 </div>
               )}
             </div>
