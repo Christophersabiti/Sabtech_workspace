@@ -4,10 +4,12 @@ import { useState, useCallback, useMemo } from 'react';
 import {
   FileCheck, Plus, Clock, CheckCircle2, XCircle, AlertTriangle,
   ChevronDown, ChevronRight, Eye, EyeOff, DollarSign, Link as LinkIcon,
+  Upload,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import type { ChangeRequest, ChangeRequestApproval } from '@/types';
+import { BulkUploadPanel, type ColumnDef } from './BulkUploadPanel';
 
 type Props = {
   projectId: string;
@@ -16,24 +18,75 @@ type Props = {
 };
 
 const STATUS_CONFIG: Record<ChangeRequestApproval, { label: string; icon: React.ElementType; color: string }> = {
-  pending:  { label: 'Pending',  icon: Clock,         color: 'bg-amber-100 text-amber-600' },
-  approved: { label: 'Approved', icon: CheckCircle2,  color: 'bg-emerald-100 text-emerald-700' },
-  rejected: { label: 'Rejected', icon: XCircle,       color: 'bg-red-100 text-red-600' },
-  deferred: { label: 'Deferred', icon: AlertTriangle,  color: 'bg-slate-100 text-slate-600' },
+  pending:  { label: 'Pending',  icon: Clock,        color: 'bg-amber-100 text-amber-600'   },
+  approved: { label: 'Approved', icon: CheckCircle2, color: 'bg-emerald-100 text-emerald-700' },
+  rejected: { label: 'Rejected', icon: XCircle,      color: 'bg-red-100 text-red-600'       },
+  deferred: { label: 'Deferred', icon: AlertTriangle, color: 'bg-slate-100 text-slate-600'  },
 };
+
+// ─── Bulk upload column definitions ─────────────────────────────────────────
+
+const CR_STATUSES = ['pending', 'approved', 'rejected', 'deferred'];
+
+const CR_COLUMNS: ColumnDef[] = [
+  {
+    key: 'title', header: 'Title', required: true, example: 'Add mobile application',
+    parse: (v) => v.trim() ? { value: v.trim(), error: null } : { value: null, error: 'Title is required.' },
+  },
+  {
+    key: 'description', header: 'Description', required: false,
+    example: 'Extend project scope to include native iOS and Android applications',
+    parse: (v) => ({ value: v.trim() || null, error: null }),
+  },
+  {
+    key: 'scope_impact', header: 'Scope Impact', required: false,
+    example: 'High — adds 3 months and a new dev stream',
+    parse: (v) => ({ value: v.trim() || null, error: null }),
+  },
+  {
+    key: 'cost_impact', header: 'Cost Impact (numeric)', required: false, example: '15000000',
+    parse: (v) => {
+      if (!v.trim()) return { value: null, error: null };
+      const n = parseFloat(v.replace(/,/g, ''));
+      if (isNaN(n)) return { value: null, error: 'Must be a number (e.g. 15000000).' };
+      return { value: n, error: null };
+    },
+  },
+  {
+    key: 'timeline_impact', header: 'Timeline Impact', required: false, example: '+3 months',
+    parse: (v) => ({ value: v.trim() || null, error: null }),
+  },
+  {
+    key: 'approval_status', header: 'Approval Status', required: false, example: 'pending',
+    allowed: CR_STATUSES,
+    parse: (v) => {
+      const s = v.trim().toLowerCase();
+      if (!s) return { value: 'pending', error: null };
+      if (!CR_STATUSES.includes(s)) return { value: 'pending', error: `Must be: ${CR_STATUSES.join(', ')}.` };
+      return { value: s, error: null };
+    },
+  },
+  {
+    key: 'client_visible', header: 'Client Visible (yes/no)', required: false, example: 'yes',
+    allowed: ['yes', 'no'],
+    parse: (v) => ({ value: v.trim().toLowerCase() === 'yes', error: null }),
+  },
+];
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ChangeRequestPanel({ projectId, requests, onRefresh }: Props) {
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId } = useActiveCompany();
-  const [showForm, setShowForm] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [showForm, setShowForm]             = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [expandedId, setExpandedId]         = useState<string | null>(null);
+  const [saving, setSaving]                 = useState(false);
 
-  // Form state
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [scopeImpact, setScopeImpact] = useState('');
-  const [costImpact, setCostImpact] = useState('');
+  const [title, setTitle]                 = useState('');
+  const [description, setDescription]     = useState('');
+  const [scopeImpact, setScopeImpact]     = useState('');
+  const [costImpact, setCostImpact]       = useState('');
   const [timelineImpact, setTimelineImpact] = useState('');
   const [clientVisible, setClientVisible] = useState(false);
 
@@ -42,21 +95,17 @@ export default function ChangeRequestPanel({ projectId, requests, onRefresh }: P
     setSaving(true);
     try {
       await supabase.from('change_requests').insert({
-        company_id: activeCompanyId,
-        project_id: projectId,
-        request_number: '', // auto-generated by trigger
-        title: title.trim(),
-        description: description.trim() || null,
-        scope_impact: scopeImpact.trim() || null,
-        cost_impact: costImpact ? parseFloat(costImpact) : null,
+        company_id:      activeCompanyId,
+        project_id:      projectId,
+        request_number:  '', // auto-generated by trigger
+        title:           title.trim(),
+        description:     description.trim() || null,
+        scope_impact:    scopeImpact.trim() || null,
+        cost_impact:     costImpact ? parseFloat(costImpact) : null,
         timeline_impact: timelineImpact.trim() || null,
-        client_visible: clientVisible,
+        client_visible:  clientVisible,
       });
-      setTitle('');
-      setDescription('');
-      setScopeImpact('');
-      setCostImpact('');
-      setTimelineImpact('');
+      setTitle(''); setDescription(''); setScopeImpact(''); setCostImpact(''); setTimelineImpact('');
       setShowForm(false);
       onRefresh();
     } finally {
@@ -80,64 +129,59 @@ export default function ChangeRequestPanel({ projectId, requests, onRefresh }: P
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
           <FileCheck className="w-4 h-4 text-blue-500" />
           Change Requests ({requests.length})
         </h3>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
-                     text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5" /> Add
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => { setShowBulkUpload(false); setShowForm(!showForm); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium
+                       text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowForm(false); setShowBulkUpload(!showBulkUpload); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium
+                       text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
+          >
+            <Upload className="w-3.5 h-3.5" /> Bulk Upload
+          </button>
+        </div>
       </div>
+
+      {/* Bulk upload panel */}
+      {showBulkUpload && activeCompanyId && (
+        <BulkUploadPanel
+          columns={CR_COLUMNS}
+          templateFilename="change-requests-template.csv"
+          apiEndpoint={`/api/projects/${projectId}/change-requests/bulk-import`}
+          companyId={activeCompanyId}
+          entityLabel="change request"
+          open={showBulkUpload}
+          onClose={() => setShowBulkUpload(false)}
+          onSuccess={() => { onRefresh(); setShowBulkUpload(false); }}
+        />
+      )}
 
       {/* Add form */}
       {showForm && (
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-          <input
-            type="text"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            placeholder="Change request title..."
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white
-                       focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
-          />
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            placeholder="Description of the change..."
-            rows={2}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white resize-none
-                       focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-          />
+          <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Change request title..."
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400" />
+          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Description of the change..." rows={2}
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <input
-              type="text"
-              value={scopeImpact}
-              onChange={e => setScopeImpact(e.target.value)}
-              placeholder="Scope impact..."
-              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white
-                         focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
-            <input
-              type="number"
-              value={costImpact}
-              onChange={e => setCostImpact(e.target.value)}
-              placeholder="Cost impact..."
-              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white
-                         focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
-            <input
-              type="text"
-              value={timelineImpact}
-              onChange={e => setTimelineImpact(e.target.value)}
-              placeholder="Timeline impact..."
-              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white
-                         focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
+            <input type="text" value={scopeImpact} onChange={e => setScopeImpact(e.target.value)} placeholder="Scope impact..."
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            <input type="number" value={costImpact} onChange={e => setCostImpact(e.target.value)} placeholder="Cost impact..."
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            <input type="text" value={timelineImpact} onChange={e => setTimelineImpact(e.target.value)} placeholder="Timeline impact..."
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
           </div>
           <label className="inline-flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
             <input type="checkbox" checked={clientVisible} onChange={e => setClientVisible(e.target.checked)} className="rounded border-slate-300" />
@@ -145,12 +189,8 @@ export default function ChangeRequestPanel({ projectId, requests, onRefresh }: P
             Client visible
           </label>
           <div className="flex gap-2">
-            <button
-              onClick={handleCreate}
-              disabled={!title.trim() || saving}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg
-                         hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer"
-            >
+            <button onClick={handleCreate} disabled={!title.trim() || saving}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors cursor-pointer">
               {saving ? 'Saving...' : 'Submit Request'}
             </button>
             <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm text-slate-500 cursor-pointer">Cancel</button>
@@ -160,7 +200,7 @@ export default function ChangeRequestPanel({ projectId, requests, onRefresh }: P
 
       {/* List */}
       <div className="space-y-2">
-        {requests.length === 0 && !showForm && (
+        {requests.length === 0 && !showForm && !showBulkUpload && (
           <div className="text-center py-8 text-sm text-slate-400">
             <FileCheck className="w-8 h-8 mx-auto mb-2 opacity-40" />
             No change requests yet.
@@ -168,16 +208,14 @@ export default function ChangeRequestPanel({ projectId, requests, onRefresh }: P
         )}
 
         {requests.map(cr => {
-          const statusCfg = STATUS_CONFIG[cr.approval_status];
+          const statusCfg  = STATUS_CONFIG[cr.approval_status];
           const StatusIcon = statusCfg.icon;
           const isExpanded = expandedId === cr.id;
 
           return (
             <div key={cr.id} className="border border-slate-200 rounded-xl overflow-hidden">
-              <button
-                onClick={() => setExpandedId(isExpanded ? null : cr.id)}
-                className="w-full flex items-center gap-2.5 p-3 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
+              <button onClick={() => setExpandedId(isExpanded ? null : cr.id)}
+                className="w-full flex items-center gap-2.5 p-3 hover:bg-slate-50 transition-colors cursor-pointer">
                 {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
                 <span className="text-xs font-mono text-slate-400">{cr.request_number}</span>
                 <span className="text-sm font-medium text-slate-700 flex-1 text-left truncate">{cr.title}</span>
@@ -217,24 +255,12 @@ export default function ChangeRequestPanel({ projectId, requests, onRefresh }: P
                   )}
                   {cr.approval_status === 'pending' && (
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => updateApproval(cr.id, 'approved')}
-                        className="px-3 py-1 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 cursor-pointer"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => updateApproval(cr.id, 'rejected')}
-                        className="px-3 py-1 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 cursor-pointer"
-                      >
-                        Reject
-                      </button>
-                      <button
-                        onClick={() => updateApproval(cr.id, 'deferred')}
-                        className="px-3 py-1 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer"
-                      >
-                        Defer
-                      </button>
+                      <button onClick={() => updateApproval(cr.id, 'approved')}
+                        className="px-3 py-1 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 cursor-pointer">Approve</button>
+                      <button onClick={() => updateApproval(cr.id, 'rejected')}
+                        className="px-3 py-1 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 cursor-pointer">Reject</button>
+                      <button onClick={() => updateApproval(cr.id, 'deferred')}
+                        className="px-3 py-1 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer">Defer</button>
                     </div>
                   )}
                 </div>
