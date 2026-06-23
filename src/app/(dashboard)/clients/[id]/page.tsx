@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
-import { Client, Invoice, Payment, ProjectWithTotals } from '@/types';
+import { Client, Invoice, Payment, ProjectWithTotals, PaymentMethod } from '@/types';
 import {
   formatCurrency,
   formatDate,
@@ -31,9 +31,43 @@ import {
   AlertCircle,
   FileDown,
   Download,
+  X,
 } from 'lucide-react';
 
 type Tab = 'overview' | 'details' | 'projects' | 'invoices' | 'payments' | 'statement';
+
+// ── Helpers for inline modals ────────────────────────────────────────────────
+
+function generateProjectCode(name: string): string {
+  const base = name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 4).padEnd(4, 'X');
+  const year = new Date().getFullYear();
+  const num  = Math.floor(100 + Math.random() * 900);
+  return `PRJ-${year}-${base}-${num}`;
+}
+
+function generatePaymentNumber(): string {
+  const year = new Date().getFullYear();
+  const num  = Math.floor(1000 + Math.random() * 9000);
+  return `RCP-${year}-${num}`;
+}
+
+const BILLING_TYPES = [
+  { value: 'single_invoice', label: 'Single Invoice' },
+  { value: 'installment',    label: 'Installment Plan' },
+  { value: 'milestone',      label: 'Milestone Billing' },
+  { value: 'recurring',      label: 'Recurring' },
+];
+
+const PROJECT_STATUSES = ['active', 'on_hold', 'completed', 'cancelled'];
+
+const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+  { value: 'mobile_money',  label: 'Mobile Money' },
+  { value: 'cash',          label: 'Cash' },
+  { value: 'cheque',        label: 'Cheque' },
+  { value: 'online',        label: 'Online' },
+  { value: 'other',         label: 'Other' },
+];
 
 type PaymentWithInvoice = Payment & {
   invoice?: {
@@ -89,6 +123,25 @@ export default function ClientProfilePage() {
   const [editing, setEditing] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // ── New Project modal ──────────────────────────────────────────────────────
+  const [showProjectModal, setShowProjectModal] = useState(false);
+  const [projectSaving, setProjectSaving]       = useState(false);
+  const [projectForm, setProjectForm] = useState({
+    project_name: '', description: '',
+    billing_type: 'single_invoice', total_contract_amount: '',
+    start_date: '', end_date: '', status: 'active', notes: '',
+  });
+
+  // ── Record Payment modal ───────────────────────────────────────────────────
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentSaving, setPaymentSaving]       = useState(false);
+  const [paymentForm, setPaymentForm] = useState({
+    invoice_id: '', amount_paid: '',
+    payment_date: new Date().toISOString().slice(0, 10),
+    payment_method: 'bank_transfer' as PaymentMethod,
+    reference_number: '', note: '',
+  });
 
   const load = useCallback(async () => {
     if (companyLoading) return;
@@ -222,6 +275,68 @@ export default function ClientProfilePage() {
     statement: 'Statement',
   };
 
+  const unpaidInvoices = useMemo(
+    () => invoices.filter(
+      (inv) => inv.status !== 'paid' && inv.status !== 'void' &&
+               inv.status !== 'cancelled' && Number(inv.balance_due || 0) > 0
+    ),
+    [invoices]
+  );
+
+  async function handleCreateProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!projectForm.project_name.trim() || !activeCompanyId || !client) return;
+    setProjectSaving(true);
+    const project_code = generateProjectCode(projectForm.project_name);
+    const { error } = await supabase.from('projects').insert({
+      ...projectForm,
+      client_id:              client.id,
+      company_id:             activeCompanyId,
+      project_code,
+      total_contract_amount:  projectForm.total_contract_amount
+                                ? parseFloat(projectForm.total_contract_amount)
+                                : null,
+      start_date: projectForm.start_date || null,
+      end_date:   projectForm.end_date   || null,
+    });
+    if (!error) {
+      setShowProjectModal(false);
+      setProjectForm({ project_name: '', description: '', billing_type: 'single_invoice', total_contract_amount: '', start_date: '', end_date: '', status: 'active', notes: '' });
+      void load();
+    } else {
+      alert('Error creating project: ' + error.message);
+    }
+    setProjectSaving(false);
+  }
+
+  async function handleCreatePayment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!paymentForm.invoice_id || !paymentForm.amount_paid || !activeCompanyId) return;
+    setPaymentSaving(true);
+    const payment_number = generatePaymentNumber();
+    const { error } = await supabase.from('payments').insert({
+      company_id:       activeCompanyId,
+      invoice_id:       paymentForm.invoice_id,
+      payment_number,
+      payment_date:     paymentForm.payment_date,
+      amount_paid:      parseFloat(paymentForm.amount_paid),
+      payment_method:   paymentForm.payment_method,
+      reference_number: paymentForm.reference_number || null,
+      note:             paymentForm.note || null,
+      status:           'confirmed',
+      is_confirmed:     true,
+      wht_withheld:     0,
+    });
+    if (!error) {
+      setShowPaymentModal(false);
+      setPaymentForm({ invoice_id: '', amount_paid: '', payment_date: new Date().toISOString().slice(0, 10), payment_method: 'bank_transfer', reference_number: '', note: '' });
+      void load();
+    } else {
+      alert('Error recording payment: ' + error.message);
+    }
+    setPaymentSaving(false);
+  }
+
   async function handleArchiveToggle() {
     if (!client) return;
 
@@ -340,13 +455,34 @@ export default function ClientProfilePage() {
                 )}
               </button>
 
-              <Link
-                href={`/invoices/new?client=${client.id}`}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-              >
-                <Plus className="h-4 w-4" />
-                New Invoice
-              </Link>
+              {/* Tab-aware primary action */}
+              {tab === 'projects' ? (
+                <button
+                  onClick={() => setShowProjectModal(true)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Project
+                </button>
+              ) : tab === 'payments' ? (
+                <button
+                  onClick={() => setShowPaymentModal(true)}
+                  disabled={unpaidInvoices.length === 0}
+                  title={unpaidInvoices.length === 0 ? 'No invoices with outstanding balance' : undefined}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <CreditCard className="h-4 w-4" />
+                  Record Payment
+                </button>
+              ) : (
+                <Link
+                  href={`/invoices/new?client=${client.id}`}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                >
+                  <Plus className="h-4 w-4" />
+                  New Invoice
+                </Link>
+              )}
             </div>
           }
         />
@@ -1029,6 +1165,207 @@ export default function ClientProfilePage() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── New Project modal ─────────────────────────────────────────────── */}
+      {showProjectModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white w-full sm:rounded-2xl sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto rounded-t-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200">
+              <h2 className="text-lg font-semibold text-slate-900">New Project</h2>
+              <button onClick={() => setShowProjectModal(false)} className="text-slate-400 hover:text-slate-600 p-1">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={(e) => void handleCreateProject(e)} className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Client</label>
+                <p className="px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium">
+                  {client.name}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Project Name *</label>
+                <input
+                  required type="text" value={projectForm.project_name}
+                  onChange={e => setProjectForm(f => ({ ...f, project_name: e.target.value }))}
+                  placeholder="e.g. Website Redesign"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+                <textarea
+                  value={projectForm.description}
+                  onChange={e => setProjectForm(f => ({ ...f, description: e.target.value }))}
+                  rows={2}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Billing Type</label>
+                  <select
+                    value={projectForm.billing_type}
+                    onChange={e => setProjectForm(f => ({ ...f, billing_type: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {BILLING_TYPES.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                  <select
+                    value={projectForm.status}
+                    onChange={e => setProjectForm(f => ({ ...f, status: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Start Date</label>
+                  <input
+                    type="date" value={projectForm.start_date}
+                    onChange={e => setProjectForm(f => ({ ...f, start_date: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">End Date</label>
+                  <input
+                    type="date" value={projectForm.end_date}
+                    onChange={e => setProjectForm(f => ({ ...f, end_date: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Contract Amount</label>
+                <input
+                  type="number" min="0" step="0.01" value={projectForm.total_contract_amount}
+                  onChange={e => setProjectForm(f => ({ ...f, total_contract_amount: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button" onClick={() => setShowProjectModal(false)}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit" disabled={!projectForm.project_name.trim() || projectSaving}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {projectSaving ? 'Creating…' : 'Create Project'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Record Payment modal ───────────────────────────────────────────── */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white w-full sm:rounded-2xl sm:max-w-md max-h-[95vh] sm:max-h-[90vh] overflow-y-auto rounded-t-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200">
+              <h2 className="text-lg font-semibold text-slate-900">Record Payment</h2>
+              <button onClick={() => setShowPaymentModal(false)} className="text-slate-400 hover:text-slate-600 p-1">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={(e) => void handleCreatePayment(e)} className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Invoice *</label>
+                <select
+                  required
+                  value={paymentForm.invoice_id}
+                  onChange={e => setPaymentForm(f => ({ ...f, invoice_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select invoice…</option>
+                  {unpaidInvoices.map(inv => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.invoice_number} — {formatCurrency(Number(inv.balance_due || 0), inv.currency)} outstanding
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Amount *</label>
+                  <input
+                    required type="number" min="0.01" step="0.01"
+                    value={paymentForm.amount_paid}
+                    onChange={e => setPaymentForm(f => ({ ...f, amount_paid: e.target.value }))}
+                    placeholder="0.00"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Date *</label>
+                  <input
+                    required type="date"
+                    value={paymentForm.payment_date}
+                    onChange={e => setPaymentForm(f => ({ ...f, payment_date: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method *</label>
+                <select
+                  required
+                  value={paymentForm.payment_method}
+                  onChange={e => setPaymentForm(f => ({ ...f, payment_method: e.target.value as PaymentMethod }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Reference / Receipt No.</label>
+                <input
+                  type="text"
+                  value={paymentForm.reference_number}
+                  onChange={e => setPaymentForm(f => ({ ...f, reference_number: e.target.value }))}
+                  placeholder="e.g. TXN12345"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+                <textarea
+                  value={paymentForm.note}
+                  onChange={e => setPaymentForm(f => ({ ...f, note: e.target.value }))}
+                  rows={2}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button" onClick={() => setShowPaymentModal(false)}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!paymentForm.invoice_id || !paymentForm.amount_paid || paymentSaving}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {paymentSaving ? 'Saving…' : 'Record Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

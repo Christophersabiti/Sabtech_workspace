@@ -37,6 +37,7 @@ import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { usePlatformImpersonation } from '@/hooks/usePlatformImpersonation';
 import { useSidebar } from './SidebarContext';
 import { NavItem } from './NavItem';
+import { NotificationBell } from './NotificationBell';
 
 const mainNav = [
   { label: 'Dashboard',   href: '/',              icon: LayoutDashboard },
@@ -577,6 +578,11 @@ export function SidebarNavContent({
             })}
           </>
         )}
+      </div>
+
+      {/* Notification bell — sits just above the user footer */}
+      <div className="border-t border-slate-800 px-3 pt-3 pb-1">
+        <NotificationBell collapsed={collapsed} />
       </div>
 
       <UserFooter collapsed={collapsed} user={user} onLogout={handleLogout} />

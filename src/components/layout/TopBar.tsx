@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { Menu } from 'lucide-react';
 import { useSidebar } from './SidebarContext';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { NotificationBell } from './NotificationBell';
 
 export function TopBar() {
   const { setMobileOpen } = useSidebar();
@@ -23,11 +24,16 @@ export function TopBar() {
       </button>
 
       {/* Logo + Name */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex flex-1 items-center gap-2.5 min-w-0">
         <Image src="/logo.svg" alt="Sabtech Workspace" width={28} height={28} />
-        <span className="max-w-[180px] truncate text-sm font-bold text-white">
+        <span className="truncate text-sm font-bold text-white">
           {activeCompany?.name ?? 'Sabtech Online'}
         </span>
+      </div>
+
+      {/* Notification bell */}
+      <div className="shrink-0">
+        <NotificationBell collapsed />
       </div>
     </header>
   );
