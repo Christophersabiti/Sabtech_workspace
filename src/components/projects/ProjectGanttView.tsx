@@ -5,10 +5,10 @@ import { ChevronRight, ChevronDown, ZoomIn, ZoomOut, AlertTriangle, Calendar } f
 import {
   EnhancedProjectTask,
   TASK_STATUS_LABELS,
-  TASK_PRIORITY_DOT,
   TASK_STATUS_DOT,
   KANBAN_COLUMN_COLORS,
 } from './types';
+import { formatScheduleVariance, getTaskBaselineVariance } from './scheduleUtils';
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
 
@@ -125,6 +125,8 @@ function GanttRow({
   const barColor = KANBAN_COLUMN_COLORS[task.status] || '#6b7280';
   const isOverdue = task.status !== 'completed' && task.status !== 'cancelled' &&
     task.end_date && task.end_date < today;
+  const hasBaseline = !!task.baseline_start_date && !!task.baseline_due_date;
+  const varianceDays = getTaskBaselineVariance(task);
 
   if (!task.start_date || !task.end_date) {
     // No-date tasks — just render a label row
@@ -146,6 +148,13 @@ function GanttRow({
   const x2   = Math.min(totalWidth, dateToX(task.end_date, rangeStart, pxPerMs) + pxPerMs * 86_400_000);
   const barW  = Math.max(4, x2 - x1);
   const progW = barW * (task.progress / 100);
+  const baselineX1 = hasBaseline
+    ? Math.max(0, dateToX(task.baseline_start_date!, rangeStart, pxPerMs))
+    : 0;
+  const baselineX2 = hasBaseline
+    ? Math.min(totalWidth, dateToX(task.baseline_due_date!, rangeStart, pxPerMs) + pxPerMs * 86_400_000)
+    : 0;
+  const baselineW = Math.max(4, baselineX2 - baselineX1);
 
   return (
     <g
@@ -157,13 +166,37 @@ function GanttRow({
       {/* Row bg */}
       <rect x={0} y={y} width={totalWidth} height={ROW_H} fill="transparent" />
 
+      {/* Baseline bar */}
+      {hasBaseline && (
+        <g>
+          <rect
+            x={baselineX1}
+            y={y + 5}
+            width={baselineW}
+            height={4}
+            rx={2}
+            fill="#64748b"
+            opacity={0.28}
+          />
+          <line
+            x1={baselineX1}
+            y1={y + 7}
+            x2={baselineX1 + baselineW}
+            y2={y + 7}
+            stroke="#64748b"
+            strokeWidth={1}
+            strokeDasharray="3 2"
+          />
+        </g>
+      )}
+
       {/* Bar track */}
       <rect
         x={x1} y={y + 10} width={barW} height={ROW_H - 20}
         rx={4}
         fill={isOverdue ? '#fca5a5' : `${barColor}28`}
-        stroke={isOverdue ? '#ef4444' : barColor}
-        strokeWidth={isOverdue ? 2 : 1}
+        stroke={task.is_critical_path ? '#dc2626' : isOverdue ? '#ef4444' : barColor}
+        strokeWidth={task.is_critical_path || isOverdue ? 2 : 1}
       />
 
       {/* Progress fill */}
@@ -208,13 +241,21 @@ function GanttRow({
         <text x={x2 + 4} y={y + ROW_H / 2 + 4} fontSize={10} fill="#ef4444">⚠</text>
       )}
 
+      {/* Blocker marker */}
+      {task.is_blocker && (
+        <g>
+          <circle cx={x2 + 8} cy={y + 11} r={5} fill="#f59e0b" />
+          <text x={x2 + 8} y={y + 14} fontSize={8} fill="white" textAnchor="middle" fontWeight={700}>!</text>
+        </g>
+      )}
+
       {/* Tooltip */}
       {tooltip && (
         <g>
           <rect
             x={Math.min(x1, totalWidth - 180)}
             y={y - 58}
-            width={170} height={54}
+            width={170} height={68}
             rx={6} fill="#1e293b" opacity={0.95}
           />
           <text x={Math.min(x1 + 8, totalWidth - 172)} y={y - 42} fontSize={11} fontWeight={600} fill="white">
@@ -225,6 +266,9 @@ function GanttRow({
           </text>
           <text x={Math.min(x1 + 8, totalWidth - 172)} y={y - 14} fontSize={10} fill="#94a3b8">
             {TASK_STATUS_LABELS[task.status]} · {task.progress}% done
+          </text>
+          <text x={Math.min(x1 + 8, totalWidth - 172)} y={y} fontSize={10} fill="#cbd5e1">
+            {varianceDays == null ? 'No baseline variance' : formatScheduleVariance(varianceDays)}
           </text>
         </g>
       )}
@@ -276,6 +320,11 @@ export function ProjectGanttView({ tasks, projectStartDate, projectEndDate, onEd
     flatTasks.forEach(t => {
       if (t.start_date) dates.push(new Date(t.start_date + 'T00:00:00').getTime());
       if (t.end_date)   dates.push(new Date(t.end_date   + 'T00:00:00').getTime());
+      if (t.baseline_start_date) dates.push(new Date(t.baseline_start_date + 'T00:00:00').getTime());
+      if (t.baseline_due_date)   dates.push(new Date(t.baseline_due_date   + 'T00:00:00').getTime());
+      if (t.revised_due_date)    dates.push(new Date(t.revised_due_date    + 'T00:00:00').getTime());
+      if (t.actual_start_date)   dates.push(new Date(t.actual_start_date   + 'T00:00:00').getTime());
+      if (t.actual_completion_date) dates.push(new Date(t.actual_completion_date + 'T00:00:00').getTime());
     });
     if (projectStartDate) dates.push(new Date(projectStartDate + 'T00:00:00').getTime());
     if (projectEndDate)   dates.push(new Date(projectEndDate   + 'T00:00:00').getTime());
@@ -323,7 +372,11 @@ export function ProjectGanttView({ tasks, projectStartDate, projectEndDate, onEd
   const toggleCollapse = useCallback((id: string) => {
     setCollapsedGroups(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   }, []);
@@ -370,6 +423,8 @@ export function ProjectGanttView({ tasks, projectStartDate, projectEndDate, onEd
         </button>
         <div className="ml-auto flex items-center gap-3 text-xs text-gray-400">
           <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-red-400 inline-block" /> Today</span>
+          <span className="flex items-center gap-1"><span className="w-4 h-1 border-t border-dashed border-slate-500 inline-block" /> Baseline</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-2 bg-blue-100 border-2 border-red-600 rounded-sm inline-block" /> Critical</span>
           <span className="flex items-center gap-1"><span className="w-3 h-2 bg-green-200 border border-green-400 rounded-sm inline-block" /> Completed</span>
           <span className="flex items-center gap-1"><span className="w-3 h-2 bg-red-200 border border-red-400 rounded-sm inline-block" /> Overdue</span>
         </div>
@@ -393,7 +448,7 @@ export function ProjectGanttView({ tasks, projectStartDate, projectEndDate, onEd
 
             {/* Task name rows */}
             <div className="overflow-y-hidden">
-              {flatTasks.map((task, idx) => {
+              {flatTasks.map((task) => {
                 const isOverdue = task.status !== 'completed' && task.status !== 'cancelled' &&
                   task.end_date && task.end_date < today;
                 return (

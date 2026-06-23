@@ -47,9 +47,8 @@ export default function TimesheetsPage() {
   const [loading, setLoading] = useState(true);
   const [periodDays, setPeriodDays] = useState(30);
 
-  const load = useCallback(async () => {
-    if (companyLoading || !activeCompanyId) { setLoading(false); return; }
-    setLoading(true);
+  const fetchLogs = useCallback(async () => {
+    if (!activeCompanyId) return [];
 
     let query = supabase
       .from('task_time_logs')
@@ -71,11 +70,26 @@ export default function TimesheetsPage() {
     }
 
     const { data } = await query.limit(500);
-    setLogs((data || []) as TimeLog[]);
-    setLoading(false);
-  }, [activeCompanyId, companyLoading, periodDays, supabase]);
+    return (data || []) as TimeLog[];
+  }, [activeCompanyId, periodDays, supabase]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (companyLoading || !activeCompanyId) return;
+
+    let cancelled = false;
+    void fetchLogs()
+      .then((list) => {
+        if (!cancelled) {
+          setLogs(list);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [activeCompanyId, companyLoading, fetchLogs]);
 
   const summary: Summary = useMemo(() => {
     const totalHours     = logs.reduce((s, l) => s + (l.hours_logged || 0), 0);
@@ -99,7 +113,7 @@ export default function TimesheetsPage() {
     return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
   }, [logs]);
 
-  if (loading) return <LoadingSpinner />;
+  if (companyLoading || (Boolean(activeCompanyId) && loading)) return <LoadingSpinner />;
 
   return (
     <div className="p-6 space-y-6">
@@ -111,7 +125,10 @@ export default function TimesheetsPage() {
             {PERIODS.map(p => (
               <button
                 key={p.days}
-                onClick={() => setPeriodDays(p.days)}
+                onClick={() => {
+                  setLoading(true);
+                  setPeriodDays(p.days);
+                }}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
                   periodDays === p.days
                     ? 'bg-blue-600 text-white border-blue-600'

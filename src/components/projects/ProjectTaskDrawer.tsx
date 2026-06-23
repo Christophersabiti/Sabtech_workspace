@@ -2,20 +2,22 @@
 
 import { useState, useEffect, useRef } from 'react';
 import {
-  X, Save, Trash2, Clock, Calendar, User2, Flag, Tag,
-  ChevronDown, CheckCircle2, AlertTriangle, Minus, Plus,
+  X, Save, Trash2, Clock, Calendar, User2, Tag, Link2,
+  ChevronDown, CheckCircle2, AlertTriangle, Minus, Plus, GitBranch,
 } from 'lucide-react';
 import {
   EnhancedProjectTask,
+  TaskDependency,
+  TaskDependencyType,
   TaskStatus,
   TaskPriority,
   TASK_STATUS_LABELS,
-  TASK_STATUS_COLORS,
   TASK_PRIORITY_LABELS,
-  TASK_PRIORITY_COLORS,
   TASK_STATUS_DOT,
   TASK_PRIORITY_DOT,
+  TASK_DEPENDENCY_TYPE_LABELS,
 } from './types';
+import { diffIsoDays, formatScheduleVariance } from './scheduleUtils';
 import { TaskCommentsSection } from './TaskCommentsSection';
 import { AttachmentsSection } from './AttachmentsSection';
 
@@ -24,6 +26,7 @@ import { AttachmentsSection } from './AttachmentsSection';
 export type TaskFormValues = {
   task_number: string;
   phase: string;
+  parent_task_id: string;
   title: string;
   description: string;
   status: TaskStatus;
@@ -31,10 +34,23 @@ export type TaskFormValues = {
   progress: number;
   start_date: string;
   end_date: string;
+  baseline_start_date: string;
+  baseline_due_date: string;
+  revised_due_date: string;
+  actual_start_date: string;
+  actual_completion_date: string;
+  is_critical_path: boolean;
+  is_blocker: boolean;
   assigned_to: string;
   is_billable: boolean;
   estimated_hours: string;
   tags: string;
+  dependencies: TaskDependencyFormValue[];
+};
+
+export type TaskDependencyFormValue = {
+  depends_on_task_id: string;
+  dependency_type: TaskDependencyType;
 };
 
 type Props = {
@@ -43,6 +59,8 @@ type Props = {
   saving: boolean;
   defaultStatus?: TaskStatus;
   companyId?: string;
+  availableTasks?: EnhancedProjectTask[];
+  taskDependencies?: TaskDependency[];
   onClose: () => void;
   onSave: (values: TaskFormValues) => void;
   onDelete?: (id: string) => void;
@@ -52,20 +70,25 @@ type Props = {
 
 const ALL_STATUSES: TaskStatus[]   = ['backlog','pending','in_progress','in_review','blocked','completed','cancelled'];
 const ALL_PRIORITIES: TaskPriority[] = ['low','medium','high','critical'];
+const ALL_DEPENDENCY_TYPES: TaskDependencyType[] = ['finish_to_start','start_to_start','finish_to_finish','start_to_finish'];
 
 function emptyForm(defaultStatus: TaskStatus = 'pending'): TaskFormValues {
   return {
-    task_number: '', phase: '',
+    task_number: '', phase: '', parent_task_id: '',
     title: '', description: '', status: defaultStatus, priority: 'medium',
     progress: 0, start_date: '', end_date: '', assigned_to: '',
-    is_billable: false, estimated_hours: '', tags: '',
+    baseline_start_date: '', baseline_due_date: '', revised_due_date: '',
+    actual_start_date: '', actual_completion_date: '',
+    is_critical_path: false, is_blocker: false,
+    is_billable: false, estimated_hours: '', tags: '', dependencies: [],
   };
 }
 
-function taskToForm(t: EnhancedProjectTask): TaskFormValues {
+function taskToForm(t: EnhancedProjectTask, dependencies: TaskDependency[] = []): TaskFormValues {
   return {
     task_number:     t.task_number?.toString() ?? '',
     phase:           t.phase ?? '',
+    parent_task_id:  t.parent_task_id ?? '',
     title:           t.title,
     description:     t.description ?? '',
     status:          t.status,
@@ -73,11 +96,77 @@ function taskToForm(t: EnhancedProjectTask): TaskFormValues {
     progress:        t.progress,
     start_date:      t.start_date ?? '',
     end_date:        t.end_date ?? '',
+    baseline_start_date: t.baseline_start_date ?? '',
+    baseline_due_date:   t.baseline_due_date ?? '',
+    revised_due_date:    t.revised_due_date ?? '',
+    actual_start_date:   t.actual_start_date ?? '',
+    actual_completion_date: t.actual_completion_date ?? '',
+    is_critical_path: t.is_critical_path,
+    is_blocker:       t.is_blocker,
     assigned_to:     t.assigned_to ?? '',
     is_billable:     t.is_billable,
     estimated_hours: t.estimated_hours?.toString() ?? '',
     tags:            t.tags?.join(', ') ?? '',
+    dependencies:    dependencies
+      .filter(d => d.task_id === t.id)
+      .map(d => ({
+        depends_on_task_id: d.depends_on_task_id,
+        dependency_type: d.dependency_type,
+      })),
   };
+}
+
+function dependencyCreatesCycle(
+  taskId: string,
+  candidateId: string,
+  dependencies: TaskDependency[],
+) {
+  const graph = new Map<string, string[]>();
+
+  dependencies
+    .filter(d => d.task_id !== taskId)
+    .forEach((dependency) => {
+      const list = graph.get(dependency.task_id) ?? [];
+      list.push(dependency.depends_on_task_id);
+      graph.set(dependency.task_id, list);
+    });
+
+  const seen = new Set<string>();
+  const stack = [candidateId];
+
+  while (stack.length > 0) {
+    const next = stack.pop()!;
+    if (next === taskId) return true;
+    if (seen.has(next)) continue;
+    seen.add(next);
+    stack.push(...(graph.get(next) ?? []));
+  }
+
+  return false;
+}
+
+function parentCreatesCycle(
+  taskId: string,
+  candidateParentId: string,
+  tasks: EnhancedProjectTask[],
+) {
+  const taskById = new Map(tasks.map(t => [t.id, t]));
+  const seen = new Set<string>();
+  let nextId: string | null = candidateParentId;
+
+  while (nextId) {
+    if (nextId === taskId) return true;
+    if (seen.has(nextId)) return false;
+    seen.add(nextId);
+    nextId = taskById.get(nextId)?.parent_task_id ?? null;
+  }
+
+  return false;
+}
+
+function varianceTone(days: number | null) {
+  if (days == null || days === 0) return 'text-slate-500';
+  return days > 0 ? 'text-red-600' : 'text-emerald-600';
 }
 
 // ─── Select component ─────────────────────────────────────────────────────────
@@ -143,7 +232,18 @@ function FieldSelect<T extends string>({
 
 // ─── Drawer ───────────────────────────────────────────────────────────────────
 
-export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId, onClose, onSave, onDelete }: Props) {
+export function ProjectTaskDrawer({
+  task,
+  open,
+  saving,
+  defaultStatus,
+  companyId,
+  availableTasks = [],
+  taskDependencies = [],
+  onClose,
+  onSave,
+  onDelete,
+}: Props) {
   const [form, setForm] = useState<TaskFormValues>(emptyForm(defaultStatus));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -152,15 +252,18 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId
   const today = new Date().toISOString().slice(0, 10);
   const isOverdue = !isNew && task!.status !== 'completed' && task!.status !== 'cancelled' &&
     task!.end_date && task!.end_date < today;
+  const plannedDueDate = form.revised_due_date || form.end_date;
+  const plannedVarianceDays = diffIsoDays(form.baseline_due_date, plannedDueDate);
+  const actualVarianceDays = diffIsoDays(form.baseline_due_date, form.actual_completion_date);
 
   // Sync form when task changes
   useEffect(() => {
     if (open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setForm(task ? taskToForm(task) : emptyForm(defaultStatus));
+      setForm(task ? taskToForm(task, taskDependencies) : emptyForm(defaultStatus));
       setConfirmDelete(false);
     }
-  }, [open, task, defaultStatus]);
+  }, [open, task, defaultStatus, taskDependencies]);
 
   // Close on Escape
   useEffect(() => {
@@ -179,9 +282,48 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.title.trim()) return;
+    if (parentWarning) return;
+    if (task && form.dependencies.some(d => dependencyCreatesCycle(task.id, d.depends_on_task_id, taskDependencies))) return;
     // Auto-complete: if status is 'completed', set progress to 100
-    const values = { ...form, progress: form.status === 'completed' ? 100 : form.progress };
+    const values = {
+      ...form,
+      progress: form.status === 'completed' ? 100 : form.progress,
+      actual_completion_date: form.status === 'completed' && !form.actual_completion_date
+        ? today
+        : form.actual_completion_date,
+    };
     onSave(values);
+  }
+
+  const selectedDependencyIds = new Set(form.dependencies.map(d => d.depends_on_task_id));
+  const dependencyTaskOptions = availableTasks.filter(t => t.id !== task?.id);
+  const dependencyWarning = task
+    ? form.dependencies.some(d => dependencyCreatesCycle(task.id, d.depends_on_task_id, taskDependencies))
+    : false;
+  const parentTaskOptions = availableTasks.filter(t =>
+    t.id !== task?.id && (!task || !parentCreatesCycle(task.id, t.id, availableTasks)),
+  );
+  const selectedParentTask = availableTasks.find(t => t.id === form.parent_task_id);
+  const parentWarning = !!task && !!form.parent_task_id &&
+    parentCreatesCycle(task.id, form.parent_task_id, availableTasks);
+
+  function addDependency() {
+    const nextTask = dependencyTaskOptions.find(t => !selectedDependencyIds.has(t.id) && (!task || !dependencyCreatesCycle(task.id, t.id, taskDependencies)));
+    if (!nextTask) return;
+    set('dependencies', [
+      ...form.dependencies,
+      { depends_on_task_id: nextTask.id, dependency_type: 'finish_to_start' },
+    ]);
+  }
+
+  function updateDependency(index: number, patch: Partial<TaskDependencyFormValue>) {
+    set('dependencies', form.dependencies.map((dependency, i) =>
+      i === index ? { ...dependency, ...patch } : dependency,
+    ));
+  }
+
+  function removeDependency(index: number) {
+    set('dependencies', form.dependencies.filter((_, i) => i !== index));
   }
 
   if (!open) return null;
@@ -248,6 +390,39 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
               />
             </div>
+          </div>
+
+          {/* WBS parent */}
+          <div className="border border-slate-100 rounded-xl p-3 space-y-2 bg-slate-50/60">
+            <label className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+              <GitBranch className="w-3.5 h-3.5 text-indigo-500" /> WBS Parent Task
+            </label>
+            <select
+              value={form.parent_task_id}
+              onChange={e => set('parent_task_id', e.target.value)}
+              className={`w-full px-3 py-2 text-sm border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
+                parentWarning ? 'border-red-300 text-red-700' : 'border-gray-200 text-gray-700'
+              }`}
+            >
+              <option value="">Top-level task</option>
+              {selectedParentTask && !parentTaskOptions.some(t => t.id === selectedParentTask.id) && (
+                <option value={selectedParentTask.id}>{selectedParentTask.title}</option>
+              )}
+              {parentTaskOptions.map(optionTask => (
+                <option key={optionTask.id} value={optionTask.id}>
+                  {optionTask.task_number != null ? `#${optionTask.task_number} ` : ''}{optionTask.title}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400">
+              Use this to group work packages under summary tasks in the WBS and Gantt.
+            </p>
+            {parentWarning && (
+              <p className="text-xs text-red-500 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                This parent would create a circular WBS hierarchy and cannot be saved.
+              </p>
+            )}
           </div>
 
           {/* Title */}
@@ -368,6 +543,104 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId
             </div>
           </div>
 
+          {/* Schedule control */}
+          <div className="border border-slate-100 rounded-xl p-3 space-y-3 bg-slate-50/60">
+            <div>
+              <p className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-blue-500" /> Schedule Control
+              </p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Capture the approved baseline, current forecast, and actual finish for variance tracking.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Baseline Start</label>
+                <input
+                  type="date"
+                  value={form.baseline_start_date}
+                  onChange={e => set('baseline_start_date', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Baseline Due</label>
+                <input
+                  type="date"
+                  value={form.baseline_due_date}
+                  min={form.baseline_start_date || undefined}
+                  onChange={e => set('baseline_due_date', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Revised Due</label>
+                <input
+                  type="date"
+                  value={form.revised_due_date}
+                  onChange={e => set('revised_due_date', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Actual Start</label>
+                <input
+                  type="date"
+                  value={form.actual_start_date}
+                  onChange={e => set('actual_start_date', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Actual Completion</label>
+                <input
+                  type="date"
+                  value={form.actual_completion_date}
+                  min={form.actual_start_date || undefined}
+                  onChange={e => set('actual_completion_date', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => set('is_critical_path', !form.is_critical_path)}
+                className={`flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium border rounded-lg transition-colors ${
+                  form.is_critical_path
+                    ? 'border-red-300 bg-red-50 text-red-700'
+                    : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {form.is_critical_path ? <AlertTriangle className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                Critical Path
+              </button>
+              <button
+                type="button"
+                onClick={() => set('is_blocker', !form.is_blocker)}
+                className={`flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium border rounded-lg transition-colors ${
+                  form.is_blocker
+                    ? 'border-amber-300 bg-amber-50 text-amber-700'
+                    : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {form.is_blocker ? <AlertTriangle className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                Blocker
+              </button>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+              <p className={`font-medium ${varianceTone(plannedVarianceDays)}`}>
+                Planned: {plannedVarianceDays == null ? 'Set baseline due and due date.' : formatScheduleVariance(plannedVarianceDays)}
+              </p>
+              <p className={`mt-1 ${varianceTone(actualVarianceDays)}`}>
+                Actual: {actualVarianceDays == null ? 'Actual completion not captured yet.' : formatScheduleVariance(actualVarianceDays)}
+              </p>
+            </div>
+          </div>
+
           {/* Assigned to */}
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
@@ -436,6 +709,97 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId
             )}
           </div>
 
+          {/* Dependencies */}
+          <div className="border border-gray-100 rounded-xl p-3 space-y-2 bg-gray-50/60">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-blue-500" /> Dependencies
+              </label>
+              <button
+                type="button"
+                onClick={addDependency}
+                disabled={dependencyTaskOptions.length === 0 || form.dependencies.length >= dependencyTaskOptions.length}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+              >
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </div>
+
+            {form.dependencies.length === 0 ? (
+              <p className="text-xs text-gray-400">No dependencies. This task can start independently.</p>
+            ) : (
+              <div className="space-y-2">
+                {form.dependencies.map((dependency, index) => {
+                  const currentTask = dependencyTaskOptions.find(t => t.id === dependency.depends_on_task_id);
+                  const createsCycle = task
+                    ? dependencyCreatesCycle(task.id, dependency.depends_on_task_id, taskDependencies)
+                    : false;
+
+                  return (
+                    <div key={`${dependency.depends_on_task_id}-${index}`} className="grid grid-cols-[1fr_130px_auto] gap-2 items-start">
+                      <select
+                        value={dependency.depends_on_task_id}
+                        onChange={e => updateDependency(index, { depends_on_task_id: e.target.value })}
+                        className={`min-w-0 px-2 py-2 text-xs border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
+                          createsCycle ? 'border-red-300 text-red-700' : 'border-gray-200 text-gray-700'
+                        }`}
+                      >
+                        {currentTask && !dependencyTaskOptions.some(t => t.id === currentTask.id) && (
+                          <option value={currentTask.id}>{currentTask.title}</option>
+                        )}
+                        {dependencyTaskOptions.map(optionTask => {
+                          const isSelectedElsewhere = form.dependencies.some((d, i) =>
+                            i !== index && d.depends_on_task_id === optionTask.id,
+                          );
+                          const wouldCycle = task
+                            ? dependencyCreatesCycle(task.id, optionTask.id, taskDependencies)
+                            : false;
+
+                          return (
+                            <option
+                              key={optionTask.id}
+                              value={optionTask.id}
+                              disabled={isSelectedElsewhere || wouldCycle}
+                            >
+                              {optionTask.task_number != null ? `#${optionTask.task_number} ` : ''}{optionTask.title}
+                              {wouldCycle ? ' (cycle)' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+
+                      <select
+                        value={dependency.dependency_type}
+                        onChange={e => updateDependency(index, { dependency_type: e.target.value as TaskDependencyType })}
+                        className="px-2 py-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      >
+                        {ALL_DEPENDENCY_TYPES.map(type => (
+                          <option key={type} value={type}>{TASK_DEPENDENCY_TYPE_LABELS[type]}</option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => removeDependency(index)}
+                        className="p-2 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        title="Remove dependency"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {dependencyWarning && (
+              <p className="text-xs text-red-500 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                One dependency would create a circular schedule chain and cannot be saved.
+              </p>
+            )}
+          </div>
+
         </form>
 
         {/* Attachments — only for existing tasks */}
@@ -495,7 +859,7 @@ export function ProjectTaskDrawer({ task, open, saving, defaultStatus, companyId
             </button>
             <button
               onClick={handleSubmit}
-              disabled={saving || !form.title.trim()}
+              disabled={saving || !form.title.trim() || dependencyWarning || parentWarning}
               className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center justify-center gap-1.5"
             >
               {saving ? (

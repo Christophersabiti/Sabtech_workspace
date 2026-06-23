@@ -45,7 +45,9 @@ VALUES (
   ]
 )
 ON CONFLICT (id) DO UPDATE
-  SET file_size_limit   = EXCLUDED.file_size_limit,
+  SET name              = EXCLUDED.name,
+      public            = false,
+      file_size_limit   = EXCLUDED.file_size_limit,
       allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 
@@ -118,6 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_raid_attachments_company ON raid_attachments(comp
 
 ALTER TABLE raid_attachments ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "tenant_raid_attachments_all" ON raid_attachments;
 CREATE POLICY "tenant_raid_attachments_all"
   ON raid_attachments FOR ALL
   USING    (is_company_member(company_id))

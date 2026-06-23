@@ -1,91 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminSupabase } from '@/lib/platformAdmin';
+import {
+  ATTACHMENT_BUCKET,
+  ATTACHMENT_SIGNED_URL_EXPIRY,
+  MAX_ATTACHMENT_BYTES,
+  fetchLinkMetadata,
+  isExpectedAttachmentStoragePath,
+  normalizeAttachmentStoragePath,
+  normalizeHttpUrl,
+  taskBelongsToCompany,
+  verifyCompanyMembership,
+} from '@/lib/pmisAttachments';
 
 export const dynamic = 'force-dynamic';
 
-const BUCKET = 'task-attachments';
-const SIGNED_URL_EXPIRY = 3600; // 1 hour
+type AttachmentPayload = {
+  taskId?: unknown;
+  companyId?: unknown;
+  type?: unknown;
+  url?: unknown;
+  displayName?: unknown;
+  fileName?: unknown;
+  fileSize?: unknown;
+  mimeType?: unknown;
+  storagePath?: unknown;
+};
 
-// ─── OG metadata fetch (server-side, SSRF-protected) ────────────────────────
-
-function isPrivateHost(hostname: string): boolean {
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
-  // RFC-1918 ranges and link-local
-  const privatePatterns = [
-    /^10\./,
-    /^192\.168\./,
-    /^172\.(1[6-9]|2\d|3[01])\./,
-    /^169\.254\./,
-    /^fc00:/i,
-    /^fe80:/i,
-  ];
-  return privatePatterns.some(p => p.test(hostname));
+function cleanString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-async function fetchLinkMetadata(rawUrl: string): Promise<{
-  link_title: string | null;
-  link_domain: string;
-  link_favicon_url: string | null;
-}> {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { link_title: null, link_domain: rawUrl, link_favicon_url: null };
+function validateFileSize(value: unknown) {
+  if (value == null) return { ok: true as const, fileSize: null };
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return { ok: false as const, error: 'fileSize must be a valid number.' };
   }
-
-  if (!['https:', 'http:'].includes(parsed.protocol)) {
-    return { link_title: null, link_domain: parsed.hostname, link_favicon_url: null };
+  if (value > MAX_ATTACHMENT_BYTES) {
+    return { ok: false as const, error: 'File exceeds 100 MB limit.' };
   }
-
-  if (isPrivateHost(parsed.hostname)) {
-    return { link_title: null, link_domain: parsed.hostname, link_favicon_url: null };
-  }
-
-  const domain = parsed.hostname;
-  const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(rawUrl, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'SabtechBot/1.0 (+link-preview)' },
-      redirect: 'follow',
-    });
-    clearTimeout(timer);
-
-    const html = await res.text();
-
-    const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1]
-      ?? html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)?.[1];
-    const titleTag = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim();
-
-    return {
-      link_title: ogTitle ?? titleTag ?? null,
-      link_domain: domain,
-      link_favicon_url: faviconUrl,
-    };
-  } catch {
-    return { link_title: null, link_domain: domain, link_favicon_url: faviconUrl };
-  }
+  return { ok: true as const, fileSize: value };
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function verifyMembership(admin: ReturnType<typeof createAdminSupabase>, authUserId: string, companyId: string) {
-  const { data } = await admin
-    .from('company_users')
-    .select('id, app_user_id')
-    .eq('auth_user_id', authUserId)
-    .eq('company_id', companyId)
-    .eq('status', 'active')
-    .maybeSingle();
-  return data;
-}
-
-// ─── GET /api/task-attachments?taskId=&companyId= ────────────────────────────
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient();
@@ -93,16 +48,19 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
-  const taskId    = searchParams.get('taskId');
+  const taskId = searchParams.get('taskId');
   const companyId = searchParams.get('companyId');
 
   if (!taskId || !companyId) {
     return NextResponse.json({ error: 'taskId and companyId are required.' }, { status: 400 });
   }
 
-  const admin      = createAdminSupabase();
-  const membership = await verifyMembership(admin, session.user.id, companyId);
+  const admin = createAdminSupabase();
+  const membership = await verifyCompanyMembership(admin, session.user.id, companyId);
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const taskExists = await taskBelongsToCompany(admin, taskId, companyId);
+  if (!taskExists) return NextResponse.json({ error: 'Task not found.' }, { status: 404 });
 
   const { data: rows, error } = await admin
     .from('task_attachments')
@@ -113,13 +71,16 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Generate signed URLs for file attachments
   const enriched = await Promise.all(
     (rows ?? []).map(async (row) => {
-      if (row.type === 'file' && row.storage_path) {
+      if (
+        row.type === 'file'
+        && row.storage_path
+        && isExpectedAttachmentStoragePath(row.storage_path, companyId, 'tasks', taskId)
+      ) {
         const { data: signed } = await admin.storage
-          .from(BUCKET)
-          .createSignedUrl(row.storage_path, SIGNED_URL_EXPIRY);
+          .from(ATTACHMENT_BUCKET)
+          .createSignedUrl(row.storage_path, ATTACHMENT_SIGNED_URL_EXPIRY);
         return { ...row, signed_url: signed?.signedUrl ?? null };
       }
       return { ...row, signed_url: null };
@@ -129,27 +90,19 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ attachments: enriched });
 }
 
-// ─── POST /api/task-attachments ───────────────────────────────────────────────
-// Body for link type:   { taskId, companyId, type: 'link', url, displayName? }
-// Body for file type:   { taskId, companyId, type: 'file', fileName, fileSize, mimeType, storagePath, displayName? }
-
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const body = await req.json().catch(() => ({}));
-  const { taskId, companyId, type, url, displayName, fileName, fileSize, mimeType, storagePath } = body as {
-    taskId?: string;
-    companyId?: string;
-    type?: string;
-    url?: string;
-    displayName?: string;
-    fileName?: string;
-    fileSize?: number;
-    mimeType?: string;
-    storagePath?: string;
-  };
+  const body = await req.json().catch(() => ({})) as AttachmentPayload;
+  const taskId = cleanString(body.taskId);
+  const companyId = cleanString(body.companyId);
+  const type = cleanString(body.type);
+  const displayName = cleanString(body.displayName);
+  const fileName = cleanString(body.fileName);
+  const mimeType = cleanString(body.mimeType);
+  const fileSizeResult = validateFileSize(body.fileSize);
 
   if (!taskId || !companyId || !type) {
     return NextResponse.json({ error: 'taskId, companyId, and type are required.' }, { status: 400 });
@@ -157,46 +110,61 @@ export async function POST(req: NextRequest) {
   if (type !== 'file' && type !== 'link') {
     return NextResponse.json({ error: 'type must be file or link.' }, { status: 400 });
   }
-  if (type === 'link' && !url?.trim()) {
-    return NextResponse.json({ error: 'url is required for link attachments.' }, { status: 400 });
-  }
-  if (type === 'file' && (!fileName || !storagePath)) {
-    return NextResponse.json({ error: 'fileName and storagePath are required for file attachments.' }, { status: 400 });
+  if (!fileSizeResult.ok) {
+    return NextResponse.json({ error: fileSizeResult.error }, { status: 400 });
   }
 
-  const admin      = createAdminSupabase();
-  const membership = await verifyMembership(admin, session.user.id, companyId);
+  const normalizedUrl = type === 'link' ? normalizeHttpUrl(body.url) : null;
+  if (type === 'link' && !normalizedUrl) {
+    return NextResponse.json({ error: 'A valid http or https url is required for link attachments.' }, { status: 400 });
+  }
+
+  const storagePath = type === 'file' ? normalizeAttachmentStoragePath(body.storagePath) : null;
+  if (type === 'file') {
+    if (!fileName || !storagePath) {
+      return NextResponse.json({ error: 'fileName and storagePath are required for file attachments.' }, { status: 400 });
+    }
+    if (!isExpectedAttachmentStoragePath(storagePath, companyId, 'tasks', taskId)) {
+      return NextResponse.json({ error: 'storagePath does not match the task attachment location.' }, { status: 400 });
+    }
+  }
+
+  const admin = createAdminSupabase();
+  const membership = await verifyCompanyMembership(admin, session.user.id, companyId);
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const taskExists = await taskBelongsToCompany(admin, taskId, companyId);
+  if (!taskExists) return NextResponse.json({ error: 'Task not found.' }, { status: 404 });
 
   let insertData: Record<string, unknown>;
 
   if (type === 'link') {
-    const meta = await fetchLinkMetadata(url!.trim());
+    const meta = await fetchLinkMetadata(normalizedUrl!);
     insertData = {
-      company_id:       companyId,
-      task_id:          taskId,
-      uploaded_by:      membership.app_user_id,
-      type:             'link',
-      display_name:     displayName?.trim() || meta.link_title || url,
-      url:              url!.trim(),
-      link_title:       meta.link_title,
-      link_domain:      meta.link_domain,
+      company_id: companyId,
+      task_id: taskId,
+      uploaded_by: membership.app_user_id,
+      type: 'link',
+      display_name: displayName || meta.link_title || normalizedUrl,
+      url: normalizedUrl,
+      link_title: meta.link_title,
+      link_domain: meta.link_domain,
       link_favicon_url: meta.link_favicon_url,
-      file_name:        null,
-      file_url:         null,
+      file_name: null,
+      file_url: null,
     };
   } else {
     insertData = {
-      company_id:    companyId,
-      task_id:       taskId,
-      uploaded_by:   membership.app_user_id,
-      type:          'file',
-      display_name:  displayName?.trim() || fileName,
-      file_name:     fileName,
-      file_size:     fileSize ?? null,
-      mime_type:     mimeType ?? null,
-      storage_path:  storagePath,
-      file_url:      null,
+      company_id: companyId,
+      task_id: taskId,
+      uploaded_by: membership.app_user_id,
+      type: 'file',
+      display_name: displayName || fileName,
+      file_name: fileName,
+      file_size: fileSizeResult.fileSize,
+      mime_type: mimeType,
+      storage_path: storagePath,
+      file_url: null,
     };
   }
 
@@ -208,11 +176,10 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // For newly created file attachments, generate the first signed URL
   if (attachment.type === 'file' && attachment.storage_path) {
     const { data: signed } = await admin.storage
-      .from(BUCKET)
-      .createSignedUrl(attachment.storage_path, SIGNED_URL_EXPIRY);
+      .from(ATTACHMENT_BUCKET)
+      .createSignedUrl(attachment.storage_path, ATTACHMENT_SIGNED_URL_EXPIRY);
     return NextResponse.json({ attachment: { ...attachment, signed_url: signed?.signedUrl ?? null } }, { status: 201 });
   }
 

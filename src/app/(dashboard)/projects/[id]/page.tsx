@@ -12,7 +12,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import {
   ArrowLeft, Plus, X, Pencil, Trash2, Tag, Settings2,
   CheckCircle, XCircle, Download, Upload, FileSpreadsheet, AlertCircle,
-  Printer, Link2, ExternalLink, Clock, TrendingUp, TrendingDown,
+  Printer, Link2, ExternalLink, Clock, TrendingUp, TrendingDown, GitBranch,
 } from 'lucide-react';
 
 // ── New PM components ──────────────────────────────────────────────────────────
@@ -25,11 +25,12 @@ import { ProjectGanttView }                          from '@/components/projects
 import { ProjectTaskDrawer }                         from '@/components/projects/ProjectTaskDrawer';
 import { TimeLogDrawer }                             from '@/components/projects/TimeLogDrawer';
 import type { TaskFormValues }                       from '@/components/projects/ProjectTaskDrawer';
-import type { EnhancedProjectTask, TaskViewMode, TaskStatus } from '@/components/projects/types';
+import type { EnhancedProjectTask, TaskDependency, TaskViewMode, TaskStatus } from '@/components/projects/types';
 import RaidLogPanel                                  from '@/components/projects/RaidLogPanel';
 import MilestonesPanel                               from '@/components/projects/MilestonesPanel';
 import ChangeRequestPanel                            from '@/components/projects/ChangeRequestPanel';
 import type { RaidEntry, Milestone, ChangeRequest }  from '@/types';
+import { formatScheduleVariance, getTaskBaselineVariance } from '@/components/projects/scheduleUtils';
 import {
   TASK_STATUS_LABELS,
   TASK_STATUS_COLORS,
@@ -255,6 +256,13 @@ const scheduleStatusClasses: Record<InvoiceSchedule['status'], string> = {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+function scheduleVarianceBadgeClass(days: number) {
+  if (days === 0) return 'text-slate-600 bg-slate-50 border-slate-200';
+  return days > 0
+    ? 'text-red-700 bg-red-50 border-red-100'
+    : 'text-emerald-700 bg-emerald-50 border-emerald-100';
+}
+
 const TASK_VIEW_KEY = 'sabtech_task_view';
 
 export default function ProjectProfilePage() {
@@ -274,6 +282,7 @@ export default function ProjectProfilePage() {
   const [milestones,     setMilestones]     = useState<Milestone[]>([]);
   const [raidEntries,    setRaidEntries]    = useState<RaidEntry[]>([]);
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
+  const [taskDependencies, setTaskDependencies] = useState<TaskDependency[]>([]);
 
   // ── Timesheets + Expenses P&L state ─────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -338,7 +347,7 @@ export default function ProjectProfilePage() {
   const load = useCallback(async () => {
     if (companyLoading) return;
     if (!activeCompanyId) {
-      setProject(null); setInvoices([]); setSchedules([]); setTasks([]); setLoading(false);
+      setProject(null); setInvoices([]); setSchedules([]); setTasks([]); setTaskDependencies([]); setLoading(false);
       return;
     }
     setLoading(true);
@@ -362,14 +371,16 @@ export default function ProjectProfilePage() {
     setExpenses(exp || []);
 
     // Load PM data in parallel
-    const [{ data: msData }, { data: raidData }, { data: crData }] = await Promise.all([
+    const [{ data: msData }, { data: raidData }, { data: crData }, { data: depData }] = await Promise.all([
       supabase.from('milestones').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('sort_order').order('target_date', { ascending: true, nullsFirst: false }),
       supabase.from('raid_log').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('created_at', { ascending: false }),
       supabase.from('change_requests').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('created_at', { ascending: false }),
+      supabase.from('task_dependencies').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('created_at', { ascending: true }),
     ]);
     setMilestones((msData || []) as Milestone[]);
     setRaidEntries((raidData || []) as RaidEntry[]);
     setChangeRequests((crData || []) as ChangeRequest[]);
+    setTaskDependencies((depData || []) as TaskDependency[]);
 
     // Load time logs for project tasks
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -395,13 +406,20 @@ export default function ProjectProfilePage() {
       tags:          Array.isArray(t.tags) ? t.tags : [],
       task_number:   t.task_number != null ? Number(t.task_number) : null,
       phase:         t.phase         ?? null,
+      baseline_start_date: t.baseline_start_date ?? null,
+      baseline_due_date:   t.baseline_due_date   ?? null,
+      revised_due_date:    t.revised_due_date    ?? null,
+      actual_start_date:   t.actual_start_date   ?? null,
+      actual_completion_date: t.actual_completion_date ?? null,
+      is_critical_path: Boolean(t.is_critical_path),
+      is_blocker:       Boolean(t.is_blocker),
     })) as EnhancedProjectTask[]));
     setLoading(false);
   }, [activeCompanyId, companyLoading, id, supabase]);
 
   useEffect(() => {
     void Promise.resolve().then(() => {
-      setProject(null); setInvoices([]); setSchedules([]); setTasks([]);
+      setProject(null); setInvoices([]); setSchedules([]); setTasks([]); setTaskDependencies([]);
       setMilestones([]); setRaidEntries([]); setChangeRequests([]);
       return load();
     });
@@ -625,6 +643,61 @@ export default function ProjectProfilePage() {
     setDrawerOpen(true);
   }
 
+  async function saveTaskDependencies(taskId: string, dependencies: TaskFormValues['dependencies']) {
+    if (!project) return false;
+
+    const allowedTaskIds = new Set(tasks.filter(t => t.id !== taskId).map(t => t.id));
+    const seen = new Set<string>();
+    const normalized = dependencies.filter((dependency) => {
+      if (!allowedTaskIds.has(dependency.depends_on_task_id)) return false;
+      if (seen.has(dependency.depends_on_task_id)) return false;
+      seen.add(dependency.depends_on_task_id);
+      return true;
+    });
+
+    const { error: deleteError } = await supabase
+      .from('task_dependencies')
+      .delete()
+      .eq('task_id', taskId)
+      .eq('company_id', project.company_id);
+
+    if (deleteError) {
+      setProjectToast({ msg: deleteError.message, ok: false });
+      setTimeout(() => setProjectToast(null), 3000);
+      return false;
+    }
+
+    if (normalized.length === 0) {
+      setTaskDependencies(prev => prev.filter(dependency => dependency.task_id !== taskId));
+      return true;
+    }
+
+    const payload = normalized.map(dependency => ({
+      company_id: project.company_id,
+      project_id: id,
+      task_id: taskId,
+      depends_on_task_id: dependency.depends_on_task_id,
+      dependency_type: dependency.dependency_type,
+    }));
+
+    const { data, error } = await supabase
+      .from('task_dependencies')
+      .insert(payload)
+      .select();
+
+    if (error) {
+      setProjectToast({ msg: error.message, ok: false });
+      setTimeout(() => setProjectToast(null), 3000);
+      return false;
+    }
+
+    setTaskDependencies(prev => [
+      ...prev.filter(dependency => dependency.task_id !== taskId),
+      ...((data || []) as TaskDependency[]),
+    ]);
+    return true;
+  }
+
   async function saveTaskFromDrawer(values: TaskFormValues) {
     if (!project) return;
     setSavingDrawer(true);
@@ -647,6 +720,14 @@ export default function ProjectProfilePage() {
       tags:            tagsArray,
       task_number:     values.task_number ? parseInt(values.task_number, 10) : null,
       phase:           values.phase.trim() || null,
+      parent_task_id:  values.parent_task_id || null,
+      baseline_start_date: values.baseline_start_date || null,
+      baseline_due_date:   values.baseline_due_date   || null,
+      revised_due_date:    values.revised_due_date    || null,
+      actual_start_date:   values.actual_start_date   || null,
+      actual_completion_date: values.actual_completion_date || null,
+      is_critical_path: values.is_critical_path,
+      is_blocker:       values.is_blocker,
     };
 
     if (drawerTask) {
@@ -657,6 +738,11 @@ export default function ProjectProfilePage() {
         .eq('id', drawerTask.id)
         .eq('company_id', project.company_id);
       if (!error) {
+        const dependenciesSaved = await saveTaskDependencies(drawerTask.id, values.dependencies);
+        if (!dependenciesSaved) {
+          setSavingDrawer(false);
+          return;
+        }
         setTasks(ts => sortTasksByTaskNumberAsc(
           ts.map(t => t.id === drawerTask.id ? { ...t, ...payload } : t)
         ));
@@ -680,7 +766,15 @@ export default function ProjectProfilePage() {
           tags:          Array.isArray(data.tags) ? data.tags : [],
           task_number:   data.task_number    ?? null,
           phase:         data.phase          ?? null,
+          baseline_start_date: data.baseline_start_date ?? null,
+          baseline_due_date:   data.baseline_due_date   ?? null,
+          revised_due_date:    data.revised_due_date    ?? null,
+          actual_start_date:   data.actual_start_date   ?? null,
+          actual_completion_date: data.actual_completion_date ?? null,
+          is_critical_path: Boolean(data.is_critical_path),
+          is_blocker:       Boolean(data.is_blocker),
         } as EnhancedProjectTask;
+        await saveTaskDependencies(newTask.id, values.dependencies);
         setTasks(ts => sortTasksByTaskNumberAsc([...ts, newTask]));
         setProjectToast({ msg: 'Task created.', ok: true });
         setTimeout(() => setProjectToast(null), 2500);
@@ -694,7 +788,13 @@ export default function ProjectProfilePage() {
   async function deleteTask(taskId: string) {
     if (!project) return;
     await supabase.from('project_tasks').delete().eq('id', taskId).eq('company_id', project.company_id);
-    setTasks(ts => ts.filter(t => t.id !== taskId));
+    setTasks(ts => ts
+      .filter(t => t.id !== taskId)
+      .map(t => t.parent_task_id === taskId ? { ...t, parent_task_id: null } : t)
+    );
+    setTaskDependencies(dependencies => dependencies.filter(d =>
+      d.task_id !== taskId && d.depends_on_task_id !== taskId,
+    ));
     setConfirmDeleteId(null);
     setDrawerOpen(false);
     setProjectToast({ msg: 'Task deleted.', ok: true });
@@ -705,11 +805,22 @@ export default function ProjectProfilePage() {
     if (!project) return;
     setTasks(ts => sortTasksByTaskNumberAsc(ts.map(t =>
       t.id === taskId
-        ? { ...t, status: newStatus, progress: newStatus === 'completed' ? 100 : t.progress }
+        ? {
+            ...t,
+            status: newStatus,
+            progress: newStatus === 'completed' ? 100 : t.progress,
+            actual_completion_date: newStatus === 'completed' ? (t.actual_completion_date ?? today) : t.actual_completion_date,
+          }
         : t
     )));
+    const statusPayload = {
+      status: newStatus,
+      progress: newStatus === 'completed' ? 100 : undefined,
+      actual_completion_date: newStatus === 'completed' ? today : undefined,
+      updated_at: new Date().toISOString(),
+    };
     await supabase.from('project_tasks')
-      .update({ status: newStatus, progress: newStatus === 'completed' ? 100 : undefined, updated_at: new Date().toISOString() })
+      .update(statusPayload)
       .eq('id', taskId).eq('company_id', project.company_id);
   }
 
@@ -747,6 +858,14 @@ export default function ProjectProfilePage() {
       tags: [],
       task_number: r.task_number || null,
       phase:       r.phase || null,
+      parent_task_id: null,
+      baseline_start_date: null,
+      baseline_due_date: null,
+      revised_due_date: null,
+      actual_start_date: null,
+      actual_completion_date: null,
+      is_critical_path: false,
+      is_blocker: false,
     }));
     const { data, error } = await supabase.from('project_tasks').insert(payload).select();
     if (error) {
@@ -761,6 +880,13 @@ export default function ProjectProfilePage() {
         tags:          Array.isArray(t.tags) ? t.tags : [],
         task_number:   t.task_number != null ? Number(t.task_number) : null,
         phase:         t.phase         ?? null,
+        baseline_start_date: t.baseline_start_date ?? null,
+        baseline_due_date:   t.baseline_due_date   ?? null,
+        revised_due_date:    t.revised_due_date    ?? null,
+        actual_start_date:   t.actual_start_date   ?? null,
+        actual_completion_date: t.actual_completion_date ?? null,
+        is_critical_path: Boolean(t.is_critical_path),
+        is_blocker:       Boolean(t.is_blocker),
       })) as EnhancedProjectTask[];
       setTasks(ts => sortTasksByTaskNumberAsc([...ts, ...newTasks]));
       setShowTaskUpload(false);
@@ -780,15 +906,23 @@ export default function ProjectProfilePage() {
   const totalOutstanding = invoices.reduce((s, i) => s + (i.balance_due  || 0), 0);
 
   const filteredTasks = applyFilters(tasks, taskFilters);
-
-  const taskSummary = {
-    total:       tasks.length,
-    pending:     tasks.filter(t => t.status === 'pending' || t.status === 'backlog').length,
-    in_progress: tasks.filter(t => t.status === 'in_progress' || t.status === 'in_review').length,
-    completed:   tasks.filter(t => t.status === 'completed').length,
-    blocked:     tasks.filter(t => t.status === 'blocked').length,
-    overdue:     tasks.filter(t => t.end_date && t.end_date < today && t.status !== 'completed' && t.status !== 'cancelled').length,
-  };
+  const taskById = new Map(tasks.map(task => [task.id, task]));
+  const dependencyCountByTask = (() => {
+    const counts = new Map<string, number>();
+    taskDependencies.forEach((dependency) => {
+      counts.set(dependency.task_id, (counts.get(dependency.task_id) ?? 0) + 1);
+    });
+    return counts;
+  })();
+  const childCountByTask = (() => {
+    const counts = new Map<string, number>();
+    tasks.forEach((task) => {
+      if (task.parent_task_id) {
+        counts.set(task.parent_task_id, (counts.get(task.parent_task_id) ?? 0) + 1);
+      }
+    });
+    return counts;
+  })();
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview',    label: 'Overview' },
@@ -1047,6 +1181,9 @@ export default function ProjectProfilePage() {
                       <tbody className="divide-y divide-slate-100">
                         {filteredTasks.map(task => {
                           const isOverdue = !!task.end_date && task.end_date < today && task.status !== 'completed' && task.status !== 'cancelled';
+                          const varianceDays = getTaskBaselineVariance(task);
+                          const parentTask = task.parent_task_id ? taskById.get(task.parent_task_id) : null;
+                          const childCount = childCountByTask.get(task.id) ?? 0;
                           return (
                             <tr key={task.id} className={`group cursor-pointer ${isOverdue ? 'bg-red-50/60' : 'hover:bg-slate-50'}`}
                               onClick={() => openEditTask(task)}>
@@ -1066,6 +1203,44 @@ export default function ProjectProfilePage() {
                                     {task.tags.slice(0, 2).map(tag => (
                                       <span key={tag} className="px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500 rounded">{tag}</span>
                                     ))}
+                                  </div>
+                                )}
+                                {(parentTask || childCount > 0) && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {parentTask && (
+                                      <span className="inline-flex items-center gap-1 text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5">
+                                        <GitBranch className="h-2.5 w-2.5" /> Child of {parentTask.task_number != null ? `#${parentTask.task_number}` : parentTask.title}
+                                      </span>
+                                    )}
+                                    {childCount > 0 && (
+                                      <span className="inline-flex items-center gap-1 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">
+                                        <GitBranch className="h-2.5 w-2.5" /> {childCount} subtask{childCount === 1 ? '' : 's'}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {(dependencyCountByTask.get(task.id) ?? 0) > 0 && (
+                                  <span className="inline-flex items-center gap-1 mt-1 text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5">
+                                    <Link2 className="h-2.5 w-2.5" /> Depends on {dependencyCountByTask.get(task.id)}
+                                  </span>
+                                )}
+                                {(task.is_critical_path || task.is_blocker || varianceDays !== null) && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {task.is_critical_path && (
+                                      <span className="inline-flex items-center gap-1 text-xs text-red-700 bg-red-50 border border-red-100 rounded px-1.5 py-0.5">
+                                        <AlertCircle className="h-2.5 w-2.5" /> Critical path
+                                      </span>
+                                    )}
+                                    {task.is_blocker && (
+                                      <span className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5">
+                                        <AlertCircle className="h-2.5 w-2.5" /> Blocker
+                                      </span>
+                                    )}
+                                    {varianceDays !== null && (
+                                      <span className={`inline-flex items-center gap-1 text-xs border rounded px-1.5 py-0.5 ${scheduleVarianceBadgeClass(varianceDays)}`}>
+                                        {formatScheduleVariance(varianceDays)}
+                                      </span>
+                                    )}
                                   </div>
                                 )}
                               </td>
@@ -1136,6 +1311,9 @@ export default function ProjectProfilePage() {
                   <div className="md:hidden space-y-3">
                     {filteredTasks.map(task => {
                       const isOverdue = !!task.end_date && task.end_date < today && task.status !== 'completed' && task.status !== 'cancelled';
+                      const varianceDays = getTaskBaselineVariance(task);
+                      const parentTask = task.parent_task_id ? taskById.get(task.parent_task_id) : null;
+                      const childCount = childCountByTask.get(task.id) ?? 0;
                       return (
                         <div
                           key={task.id}
@@ -1153,6 +1331,39 @@ export default function ProjectProfilePage() {
                                 </span>
                               )}
                               {task.description && <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{task.description}</p>}
+                              {(parentTask || childCount > 0) && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {parentTask && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5">
+                                      <GitBranch className="h-2.5 w-2.5" /> Child of {parentTask.task_number != null ? `#${parentTask.task_number}` : parentTask.title}
+                                    </span>
+                                  )}
+                                  {childCount > 0 && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">
+                                      <GitBranch className="h-2.5 w-2.5" /> {childCount} subtask{childCount === 1 ? '' : 's'}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {(task.is_critical_path || task.is_blocker || varianceDays !== null) && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {task.is_critical_path && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-700 bg-red-50 border border-red-100 rounded px-1.5 py-0.5">
+                                      <AlertCircle className="h-2.5 w-2.5" /> Critical path
+                                    </span>
+                                  )}
+                                  {task.is_blocker && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5">
+                                      <AlertCircle className="h-2.5 w-2.5" /> Blocker
+                                    </span>
+                                  )}
+                                  {varianceDays !== null && (
+                                    <span className={`inline-flex items-center gap-1 text-[10px] font-medium border rounded px-1.5 py-0.5 ${scheduleVarianceBadgeClass(varianceDays)}`}>
+                                      {formatScheduleVariance(varianceDays)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0 ${TASK_STATUS_COLORS[task.status]}`}>
                               {TASK_STATUS_LABELS[task.status]}
@@ -1165,6 +1376,11 @@ export default function ProjectProfilePage() {
                               </span>
                             )}
                             {task.assigned_to && <span>{task.assigned_to}</span>}
+                            {(dependencyCountByTask.get(task.id) ?? 0) > 0 && (
+                              <span className="inline-flex items-center gap-1 text-blue-600">
+                                <Link2 className="h-3 w-3" /> {dependencyCountByTask.get(task.id)}
+                              </span>
+                            )}
                             <span className="ml-auto">{task.progress}%</span>
                           </div>
                           <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
@@ -1365,6 +1581,8 @@ export default function ProjectProfilePage() {
         saving={savingDrawer}
         defaultStatus={drawerDefaultStatus}
         companyId={activeCompanyId ?? undefined}
+        availableTasks={tasks}
+        taskDependencies={taskDependencies}
         onClose={() => setDrawerOpen(false)}
         onSave={saveTaskFromDrawer}
         onDelete={id => setConfirmDeleteId(id)}

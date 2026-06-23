@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminSupabase } from '@/lib/platformAdmin';
+import {
+  ATTACHMENT_BUCKET,
+  isExpectedAttachmentStoragePath,
+} from '@/lib/pmisAttachments';
 
 export const dynamic = 'force-dynamic';
 
-const BUCKET = 'task-attachments';
+function getRoleName(roles: unknown) {
+  if (Array.isArray(roles)) {
+    return typeof roles[0]?.name === 'string' ? roles[0].name : '';
+  }
+  if (roles && typeof roles === 'object' && 'name' in roles) {
+    const name = (roles as { name?: unknown }).name;
+    return typeof name === 'string' ? name : '';
+  }
+  return '';
+}
 
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const supabase = await createClient();
@@ -19,7 +32,7 @@ export async function DELETE(
 
   const { data: attachment } = await admin
     .from('task_attachments')
-    .select('id, uploaded_by, company_id, type, storage_path')
+    .select('id, uploaded_by, company_id, task_id, type, storage_path')
     .eq('id', attachmentId)
     .maybeSingle();
 
@@ -35,17 +48,25 @@ export async function DELETE(
 
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const roleName = (membership.roles as { name?: string } | null)?.name ?? '';
-  const isAdmin  = roleName === 'admin' || roleName === 'owner';
-  const isOwner  = attachment.uploaded_by === membership.app_user_id;
+  const roleName = getRoleName(membership.roles);
+  const isAdmin = roleName === 'admin' || roleName === 'owner';
+  const isOwner = attachment.uploaded_by === membership.app_user_id;
 
   if (!isOwner && !isAdmin) {
     return NextResponse.json({ error: 'You can only delete your own attachments.' }, { status: 403 });
   }
 
-  // Remove from storage first (best-effort — don't block on failure)
-  if (attachment.type === 'file' && attachment.storage_path) {
-    await admin.storage.from(BUCKET).remove([attachment.storage_path]);
+  if (
+    attachment.type === 'file'
+    && attachment.storage_path
+    && isExpectedAttachmentStoragePath(
+      attachment.storage_path,
+      attachment.company_id,
+      'tasks',
+      attachment.task_id,
+    )
+  ) {
+    await admin.storage.from(ATTACHMENT_BUCKET).remove([attachment.storage_path]);
   }
 
   const { error } = await admin.from('task_attachments').delete().eq('id', attachmentId);

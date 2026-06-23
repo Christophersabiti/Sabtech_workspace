@@ -13,6 +13,7 @@ export type TaskStatus =
 
 export type TaskInvoiceStatus = 'not_invoiced' | 'pending' | 'invoiced' | 'paid';
 export type TaskPaymentStatus = 'unpaid' | 'partial' | 'paid';
+export type TaskDependencyType = 'finish_to_start' | 'start_to_start' | 'finish_to_finish' | 'start_to_finish';
 
 export type EnhancedProjectTask = {
   id: string;
@@ -82,7 +83,7 @@ export type TaskDependency = {
   project_id: string | null;
   task_id: string;
   depends_on_task_id: string;
-  dependency_type: 'finish_to_start' | 'start_to_start' | 'finish_to_finish' | 'start_to_finish';
+  dependency_type: TaskDependencyType;
   created_at: string;
 };
 
@@ -188,6 +189,13 @@ export const TASK_PAYMENT_STATUS_COLORS: Record<TaskPaymentStatus, string> = {
   unpaid:  'bg-red-100 text-red-600',
   partial: 'bg-amber-100 text-amber-600',
   paid:    'bg-emerald-100 text-emerald-600',
+};
+
+export const TASK_DEPENDENCY_TYPE_LABELS: Record<TaskDependencyType, string> = {
+  finish_to_start:  'Finish to Start',
+  start_to_start:   'Start to Start',
+  finish_to_finish: 'Finish to Finish',
+  start_to_finish:  'Start to Finish',
 };
 
 export const VISIBILITY_LABELS = {

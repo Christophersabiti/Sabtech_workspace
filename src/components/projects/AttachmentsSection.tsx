@@ -5,7 +5,7 @@ import {
 } from 'react';
 import {
   Paperclip, Upload, Link2, ExternalLink, Download, Trash2,
-  Loader2, ChevronDown, ChevronUp, File, FileText, Image,
+  Loader2, ChevronDown, ChevronUp, File, FileText, Image as ImageIcon,
   Film, Music, Archive, X, Plus,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
@@ -59,7 +59,7 @@ const MAX_FILE_BYTES = 100 * 1024 * 1024; // 100 MB
 
 function mimeIcon(mimeType: string | null, className = 'w-5 h-5') {
   if (!mimeType) return <File className={className} />;
-  if (mimeType.startsWith('image/'))  return <Image className={className} />;
+  if (mimeType.startsWith('image/'))  return <ImageIcon className={className} />;
   if (mimeType.startsWith('video/'))  return <Film className={className} />;
   if (mimeType.startsWith('audio/'))  return <Music className={className} />;
   if (mimeType === 'application/pdf' || mimeType.includes('word') || mimeType.startsWith('text/'))
@@ -122,13 +122,6 @@ export function AttachmentsSection({
     return (data.attachments ?? []) as Attachment[];
   }, [apiBase, entityId, companyId, entityParam]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const list = await fetchAttachments();
-    setAttachments(list);
-    setLoading(false);
-  }, [fetchAttachments]);
-
   useEffect(() => {
     let cancelled = false;
     void fetchAttachments()
@@ -162,7 +155,6 @@ export function AttachmentsSection({
         return;
       }
 
-      const ext      = file.name.split('.').pop() ?? 'bin';
       const uuid     = crypto.randomUUID();
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const path     = `${storageFolder}/${uuid}_${safeName}`;
@@ -234,7 +226,11 @@ export function AttachmentsSection({
 
     setLinkError('');
     try {
-      new URL(trimmedUrl);
+      const parsedUrl = new URL(trimmedUrl);
+      if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+        setLinkError('Please enter a valid http or https URL.');
+        return;
+      }
     } catch {
       setLinkError('Please enter a valid URL (include https://).');
       return;
@@ -547,6 +543,7 @@ export function AttachmentsSection({
                     className="group flex items-center gap-2.5 px-3 py-2 rounded-xl border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors"
                   >
                     {att.link_favicon_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={att.link_favicon_url}
                         alt=""

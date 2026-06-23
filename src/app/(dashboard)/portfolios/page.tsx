@@ -55,19 +55,34 @@ export default function PortfoliosPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-  const load = useCallback(async () => {
-    if (companyLoading || !activeCompanyId) { setLoading(false); return; }
-    setLoading(true);
+  const fetchPortfolios = useCallback(async () => {
+    if (!activeCompanyId) return [];
+
     const { data } = await supabase
       .from('portfolios')
       .select('*, client:clients(name)')
       .eq('company_id', activeCompanyId)
       .order('created_at', { ascending: false });
-    setPortfolios((data || []) as Portfolio[]);
-    setLoading(false);
-  }, [activeCompanyId, companyLoading, supabase]);
+    return (data || []) as Portfolio[];
+  }, [activeCompanyId, supabase]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (companyLoading || !activeCompanyId) return;
+
+    let cancelled = false;
+    void fetchPortfolios()
+      .then((list) => {
+        if (!cancelled) {
+          setPortfolios(list);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [activeCompanyId, companyLoading, fetchPortfolios]);
 
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
@@ -117,17 +132,17 @@ export default function PortfoliosPage() {
     if (error) { showToast(error.message, false); return; }
     showToast(editingId ? 'Portfolio updated.' : 'Portfolio created.', true);
     setShowForm(false);
-    await load();
+    setPortfolios(await fetchPortfolios());
   }
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this portfolio?')) return;
     await supabase.from('portfolios').delete().eq('id', id);
     showToast('Portfolio deleted.', true);
-    await load();
+    setPortfolios(await fetchPortfolios());
   }
 
-  if (loading) return <LoadingSpinner />;
+  if (companyLoading || (Boolean(activeCompanyId) && loading)) return <LoadingSpinner />;
 
   return (
     <div className="p-6 space-y-6">
