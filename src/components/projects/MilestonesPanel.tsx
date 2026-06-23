@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
-import type { Milestone } from '@/types';
+import type { Milestone, MilestoneStatus } from '@/types';
 import { BulkUploadPanel, type ColumnDef } from './BulkUploadPanel';
 
 type Props = {
@@ -16,7 +16,7 @@ type Props = {
   onRefresh: () => void;
 };
 
-const STATUS_COLORS: Record<string, string> = {
+const STATUS_COLORS: Record<MilestoneStatus, string> = {
   pending:     'bg-slate-100 text-slate-600',
   in_progress: 'bg-blue-100 text-blue-700',
   completed:   'bg-emerald-100 text-emerald-700',
@@ -24,12 +24,29 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled:   'bg-gray-100 text-gray-500',
 };
 
-const STATUS_ICONS: Record<string, React.ElementType> = {
+const STATUS_ICONS: Record<MilestoneStatus, React.ElementType> = {
   pending:     Clock,
   in_progress: Target,
   completed:   CheckCircle2,
   missed:      AlertCircle,
   cancelled:   X,
+};
+
+const STATUS_LABELS: Record<MilestoneStatus, string> = {
+  pending:     'Pending',
+  in_progress: 'In Progress',
+  completed:   'Completed',
+  missed:      'Missed',
+  cancelled:   'Cancelled',
+};
+
+type ReviewFormState = {
+  status: MilestoneStatus;
+  progress: string;
+  target_date: string;
+  actual_date: string;
+  remarks: string;
+  client_visible: boolean;
 };
 
 // ─── Bulk upload column definitions ─────────────────────────────────────────
@@ -48,7 +65,39 @@ function parseDateDMY(raw: string): { value: string | null; error: string | null
   return { value: `${y}-${mm}-${dd}`, error: null };
 }
 
-const MILESTONE_STATUSES = ['pending', 'in_progress', 'completed', 'missed', 'cancelled'];
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function clampProgress(value: string | number) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(100, Math.max(0, Math.round(parsed)));
+}
+
+function milestoneToReviewForm(milestone: Milestone): ReviewFormState {
+  return {
+    status: milestone.status,
+    progress: String(milestone.progress ?? 0),
+    target_date: milestone.target_date ?? '',
+    actual_date: milestone.actual_date ?? '',
+    remarks: milestone.remarks ?? '',
+    client_visible: milestone.client_visible,
+  };
+}
+
+function emptyReviewForm(): ReviewFormState {
+  return {
+    status: 'pending',
+    progress: '0',
+    target_date: '',
+    actual_date: '',
+    remarks: '',
+    client_visible: true,
+  };
+}
+
+const MILESTONE_STATUSES: MilestoneStatus[] = ['pending', 'in_progress', 'completed', 'missed', 'cancelled'];
 
 const MILESTONE_COLUMNS: ColumnDef[] = [
   {
@@ -69,8 +118,9 @@ const MILESTONE_COLUMNS: ColumnDef[] = [
     parse: (v) => {
       const s = v.trim().toLowerCase();
       if (!s) return { value: 'pending', error: null };
-      if (!MILESTONE_STATUSES.includes(s)) return { value: 'pending', error: `Must be one of: ${MILESTONE_STATUSES.join(', ')}.` };
-      return { value: s, error: null };
+      const status = s as MilestoneStatus;
+      if (!MILESTONE_STATUSES.includes(status)) return { value: 'pending', error: `Must be one of: ${MILESTONE_STATUSES.join(', ')}.` };
+      return { value: status, error: null };
     },
   },
   {
@@ -102,11 +152,27 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [expandedId, setExpandedId]       = useState<string | null>(null);
   const [saving, setSaving]               = useState(false);
+  const [savingReviewId, setSavingReviewId] = useState<string | null>(null);
+  const [reviewForm, setReviewForm] = useState<ReviewFormState>(emptyReviewForm);
 
   const [name, setName]               = useState('');
   const [description, setDescription] = useState('');
   const [targetDate, setTargetDate]   = useState('');
   const [clientVisible, setClientVisible] = useState(true);
+
+  function openMilestoneReview(milestone: Milestone) {
+    if (expandedId === milestone.id) {
+      setExpandedId(null);
+      return;
+    }
+
+    setExpandedId(milestone.id);
+    setReviewForm(milestoneToReviewForm(milestone));
+  }
+
+  function updateReview<K extends keyof ReviewFormState>(key: K, value: ReviewFormState[K]) {
+    setReviewForm(current => ({ ...current, [key]: value }));
+  }
 
   const handleCreate = useCallback(async () => {
     if (!name.trim() || !activeCompanyId) return;
@@ -129,16 +195,58 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
     }
   }, [name, description, targetDate, clientVisible, activeCompanyId, projectId, milestones.length, supabase, onRefresh]);
 
-  const updateStatus = useCallback(async (id: string, status: string) => {
-    await supabase.from('milestones').update({
+  const updateStatus = useCallback(async (milestone: Milestone, status: MilestoneStatus) => {
+    const payload = {
       status,
-      ...(status === 'completed' ? { actual_date: new Date().toISOString().split('T')[0], progress: 100 } : {}),
-    }).eq('id', id);
+      progress: status === 'completed' ? 100 : milestone.progress,
+      actual_date: status === 'completed' ? (milestone.actual_date ?? todayIso()) : milestone.actual_date,
+    };
+
+    await supabase
+      .from('milestones')
+      .update(payload)
+      .eq('id', milestone.id)
+      .eq('company_id', milestone.company_id);
     onRefresh();
   }, [supabase, onRefresh]);
 
-  const pending   = milestones.filter(m => m.status === 'pending' || m.status === 'in_progress');
+  const saveReview = useCallback(async (milestone: Milestone) => {
+    const status = reviewForm.status;
+    const progress = status === 'completed' ? 100 : clampProgress(reviewForm.progress);
+    const actualDate = status === 'completed'
+      ? (reviewForm.actual_date || todayIso())
+      : reviewForm.actual_date || null;
+
+    setSavingReviewId(milestone.id);
+    try {
+      await supabase
+        .from('milestones')
+        .update({
+          status,
+          progress,
+          target_date: reviewForm.target_date || null,
+          actual_date: actualDate,
+          remarks: reviewForm.remarks.trim() || null,
+          client_visible: reviewForm.client_visible,
+        })
+        .eq('id', milestone.id)
+        .eq('company_id', milestone.company_id);
+      onRefresh();
+    } finally {
+      setSavingReviewId(null);
+    }
+  }, [reviewForm, supabase, onRefresh]);
+
+  const pending   = milestones.filter(m => m.status === 'pending' || m.status === 'in_progress' || m.status === 'missed');
   const completed = milestones.filter(m => m.status === 'completed');
+  const cancelled = milestones.filter(m => m.status === 'cancelled');
+  const today = todayIso();
+  const overdueCount = pending.filter(m => !!m.target_date && m.target_date < today && m.status !== 'missed').length;
+  const dueSoonCount = pending.filter((m) => {
+    if (!m.target_date || m.target_date < today) return false;
+    const daysUntilDue = Math.ceil((new Date(`${m.target_date}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86_400_000);
+    return daysUntilDue <= 7;
+  }).length;
 
   function downloadMilestoneTemplate() {
     const headers = MILESTONE_COLUMNS.map(c => c.header).join(',');
@@ -189,6 +297,20 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {[
+          { label: 'Active', value: pending.length, tone: 'bg-blue-50 text-blue-700 border-blue-100' },
+          { label: 'Due 7 days', value: dueSoonCount, tone: 'bg-amber-50 text-amber-700 border-amber-100' },
+          { label: 'Overdue', value: overdueCount, tone: 'bg-red-50 text-red-700 border-red-100' },
+          { label: 'Completed', value: completed.length, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+        ].map(item => (
+          <div key={item.label} className={`rounded-lg border px-3 py-2 ${item.tone}`}>
+            <p className="text-[10px] font-semibold uppercase tracking-wide opacity-75">{item.label}</p>
+            <p className="text-lg font-bold tabular-nums">{item.value}</p>
+          </div>
+        ))}
+      </div>
+
       {/* Bulk upload panel */}
       {showBulkUpload && activeCompanyId && (
         <BulkUploadPanel
@@ -199,7 +321,7 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
           entityLabel="milestone"
           open={showBulkUpload}
           onClose={() => setShowBulkUpload(false)}
-          onSuccess={(count) => { onRefresh(); setShowBulkUpload(false); }}
+          onSuccess={() => { onRefresh(); setShowBulkUpload(false); }}
         />
       )}
 
@@ -246,34 +368,150 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
           {pending.map(m => {
             const StatusIcon = STATUS_ICONS[m.status] || Clock;
             const isExpanded = expandedId === m.id;
-            const isOverdue  = m.target_date && new Date(m.target_date) < new Date() && m.status !== 'completed';
+            const isOverdue  = !!m.target_date && m.target_date < today && m.status !== 'missed';
+            const isDueSoon = !!m.target_date && m.target_date >= today &&
+              Math.ceil((new Date(`${m.target_date}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86_400_000) <= 7;
+            const reviewProgress = clampProgress(reviewForm.progress);
             return (
               <div key={m.id} className={`border rounded-xl overflow-hidden ${isOverdue ? 'border-red-200' : 'border-slate-200'}`}>
-                <button onClick={() => setExpandedId(isExpanded ? null : m.id)}
+                <button onClick={() => openMilestoneReview(m)}
                   className="w-full flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors cursor-pointer">
                   {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${STATUS_COLORS[m.status]}`}>{m.status.replace(/_/g, ' ')}</span>
+                  <StatusIcon className={`w-4 h-4 ${m.status === 'missed' ? 'text-red-500' : 'text-violet-500'}`} />
+                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${STATUS_COLORS[m.status]}`}>{STATUS_LABELS[m.status]}</span>
                   <span className="text-sm font-medium text-slate-700 flex-1 text-left truncate">{m.name}</span>
                   {m.client_visible && <Eye className="w-3.5 h-3.5 text-sky-400" />}
                   {m.target_date && (
-                    <span className={`text-xs ${isOverdue ? 'text-red-500 font-medium' : 'text-slate-500'}`}>{m.target_date}</span>
+                    <span className={`inline-flex items-center gap-1 text-xs ${
+                      isOverdue ? 'text-red-500 font-medium' : isDueSoon ? 'text-amber-600 font-medium' : 'text-slate-500'
+                    }`}>
+                      <Calendar className="w-3 h-3" />
+                      {m.target_date}
+                    </span>
                   )}
                   <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                     <div className="h-full bg-violet-500 rounded-full" style={{ width: `${m.progress}%` }} />
                   </div>
                 </button>
                 {isExpanded && (
-                  <div className="px-4 pb-3 border-t border-slate-100 bg-slate-50/50 space-y-2">
+                  <div className="px-4 pb-4 border-t border-slate-100 bg-slate-50/50 space-y-3">
                     {m.description && <p className="text-sm text-slate-600">{m.description}</p>}
-                    {m.remarks && <p className="text-xs text-slate-500 italic">{m.remarks}</p>}
-                    <div className="flex gap-2">
-                      {m.status !== 'completed' && (
-                        <button onClick={() => updateStatus(m.id, 'completed')}
-                          className="px-3 py-1 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer">Mark Complete</button>
-                      )}
+
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Review Status</label>
+                        <select
+                          value={reviewForm.status}
+                          onChange={(e) => {
+                            const status = e.target.value as MilestoneStatus;
+                            setReviewForm(current => ({
+                              ...current,
+                              status,
+                              progress: status === 'completed' ? '100' : current.progress,
+                              actual_date: status === 'completed' && !current.actual_date ? today : current.actual_date,
+                            }));
+                          }}
+                          className="w-full px-2 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        >
+                          {MILESTONE_STATUSES.map(status => (
+                            <option key={status} value={status}>{STATUS_LABELS[status]}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Target Date</label>
+                        <input
+                          type="date"
+                          value={reviewForm.target_date}
+                          onChange={e => updateReview('target_date', e.target.value)}
+                          className="w-full px-2 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Actual Date</label>
+                        <input
+                          type="date"
+                          value={reviewForm.actual_date}
+                          onChange={e => updateReview('actual_date', e.target.value)}
+                          className="w-full px-2 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        />
+                      </div>
+
+                      <label className="flex items-end gap-2 text-xs text-slate-600 cursor-pointer pb-2">
+                        <input
+                          type="checkbox"
+                          checked={reviewForm.client_visible}
+                          onChange={e => updateReview('client_visible', e.target.checked)}
+                          className="rounded border-slate-300"
+                        />
+                        {reviewForm.client_visible ? <Eye className="w-4 h-4 text-sky-500" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
+                        Client visible
+                      </label>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-medium text-slate-500">Progress Review</label>
+                        <span className="text-xs font-semibold text-slate-700 tabular-nums">{reviewProgress}%</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={5}
+                          value={reviewProgress}
+                          onChange={e => updateReview('progress', e.target.value)}
+                          className="flex-1 accent-violet-500"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={reviewForm.progress}
+                          onChange={e => updateReview('progress', e.target.value)}
+                          className="w-16 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1">Review Remarks</label>
+                      <textarea
+                        value={reviewForm.remarks}
+                        onChange={e => updateReview('remarks', e.target.value)}
+                        placeholder="Decision notes, completion evidence, blockers, or client review feedback..."
+                        rows={3}
+                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => saveReview(m)}
+                        disabled={savingReviewId === m.id}
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors cursor-pointer"
+                      >
+                        {savingReviewId === m.id ? 'Saving...' : 'Save Review'}
+                      </button>
                       {m.status === 'pending' && (
-                        <button onClick={() => updateStatus(m.id, 'in_progress')}
-                          className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer">Start</button>
+                        <button onClick={() => updateStatus(m, 'in_progress')}
+                          className="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer">Start</button>
+                      )}
+                      {m.status !== 'completed' && (
+                        <button onClick={() => updateStatus(m, 'completed')}
+                          className="px-3 py-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer">Mark Complete</button>
+                      )}
+                      {isOverdue && m.status !== 'missed' && (
+                        <button onClick={() => updateStatus(m, 'missed')}
+                          className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors cursor-pointer">Mark Missed</button>
+                      )}
+                      {m.status !== 'cancelled' && (
+                        <button onClick={() => updateStatus(m, 'cancelled')}
+                          className="px-3 py-1.5 text-xs font-medium text-slate-500 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer">Cancel</button>
                       )}
                     </div>
                   </div>
@@ -294,6 +532,21 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
                 <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                 <span className="text-sm text-slate-600 flex-1 line-through">{m.name}</span>
                 <span className="text-xs text-slate-400">{m.actual_date || m.target_date || ''}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {cancelled.length > 0 && (
+        <div>
+          <p className="text-xs text-slate-400 mb-2">Cancelled ({cancelled.length})</p>
+          <div className="space-y-1">
+            {cancelled.map(m => (
+              <div key={m.id} className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+                <X className="w-4 h-4 text-slate-400" />
+                <span className="text-sm text-slate-500 flex-1">{m.name}</span>
+                {m.target_date && <span className="text-xs text-slate-400">{m.target_date}</span>}
               </div>
             ))}
           </div>
