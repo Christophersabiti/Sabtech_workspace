@@ -140,6 +140,18 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
   const pending   = milestones.filter(m => m.status === 'pending' || m.status === 'in_progress');
   const completed = milestones.filter(m => m.status === 'completed');
 
+  function downloadMilestoneTemplate() {
+    const headers = MILESTONE_COLUMNS.map(c => c.header).join(',');
+    const notes   = `# Notes: ${MILESTONE_COLUMNS.map(c => [c.required ? 'REQUIRED' : '', c.allowed ? `Allowed: ${c.allowed.join('/')}` : ''].filter(Boolean).join(' | ')).join(',')}`;
+    const example = MILESTONE_COLUMNS.map(c => c.example ?? '').join(',');
+    const csv  = [headers, notes, example].join('\r\n') + '\r\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = 'milestones-template.csv'; link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -151,11 +163,12 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={() => { setShowBulkUpload(false); setShowForm(!showForm); }}
+            onClick={downloadMilestoneTemplate}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium
-                       text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                       text-slate-600 bg-white border border-slate-200 rounded-lg
+                       hover:bg-slate-50 hover:border-slate-300 transition-colors"
           >
-            <Plus className="w-3.5 h-3.5" /> Add
+            <Download className="w-3.5 h-3.5" /> Template
           </button>
           <button
             type="button"
@@ -164,6 +177,14 @@ export default function MilestonesPanel({ projectId, milestones, onRefresh }: Pr
                        text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
           >
             <Upload className="w-3.5 h-3.5" /> Bulk Upload
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowBulkUpload(false); setShowForm(!showForm); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium
+                       text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add
           </button>
         </div>
       </div>

@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import {
   Shield, Plus, AlertTriangle, Info, CheckCircle2, Lightbulb,
-  ChevronDown, ChevronRight, Eye, EyeOff, X, Upload,
+  ChevronDown, ChevronRight, Eye, EyeOff, X, Upload, Download,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
@@ -185,6 +185,18 @@ export default function RaidLogPanel({ projectId, entries, onRefresh }: Props) {
     return acc;
   }, {});
 
+  function downloadRaidTemplate() {
+    const headers = RAID_COLUMNS.map(c => c.header).join(',');
+    const notes   = `# Notes: ${RAID_COLUMNS.map(c => [c.required ? 'REQUIRED' : '', c.allowed ? `Allowed: ${c.allowed.join('/')}` : ''].filter(Boolean).join(' | ')).join(',')}`;
+    const example = RAID_COLUMNS.map(c => c.example ?? '').join(',');
+    const csv  = [headers, notes, example].join('\r\n') + '\r\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = 'raid-log-template.csv'; link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -196,11 +208,12 @@ export default function RaidLogPanel({ projectId, entries, onRefresh }: Props) {
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={() => { setShowBulkUpload(false); setShowForm(!showForm); }}
+            onClick={downloadRaidTemplate}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium
-                       text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
+                       text-slate-600 bg-white border border-slate-200 rounded-lg
+                       hover:bg-slate-50 hover:border-slate-300 transition-colors cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" /> Add
+            <Download className="w-3.5 h-3.5" /> Template
           </button>
           <button
             type="button"
@@ -209,6 +222,14 @@ export default function RaidLogPanel({ projectId, entries, onRefresh }: Props) {
                        text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" /> Bulk Upload
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowBulkUpload(false); setShowForm(!showForm); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium
+                       text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add
           </button>
         </div>
       </div>
