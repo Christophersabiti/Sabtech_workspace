@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { useEntitlements } from '@/hooks/useEntitlements';
+import { useProjects } from '@/hooks/useProjects';
 import { FeatureBlockedState } from '@/components/billing/FeatureBlockedState';
-import { Client, Project } from '@/types';
 import { formatCurrency, formatDate, BILLING_TYPE_LABELS } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Plus, Search, X, FolderOpen } from 'lucide-react';
@@ -38,9 +38,6 @@ export default function ProjectsPage() {
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const { loading: entitlementLoading, canUse } = useEntitlements();
-  const [projects, setProjects] = useState<(Project & { client: Client })[]>([]);
-  const [clients, setClients]   = useState<Client[]>([]);
-  const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState('');
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving]     = useState(false);
@@ -51,42 +48,9 @@ export default function ProjectsPage() {
     status: 'active', notes: '',
   });
 
-  const fetchData = useCallback(async () => {
-    if (!activeCompanyId) {
-      if (!companyLoading) {
-        setProjects([]);
-        setClients([]);
-        setLoading(false);
-      }
-      return;
-    }
+  const { projects, clients, loading: cacheLoading, mutate } = useProjects(activeCompanyId);
 
-    setLoading(true);
-    const [{ data: proj }, { data: cl }] = await Promise.all([
-      supabase
-        .from('projects')
-        .select('*, client:clients(*)')
-        .eq('company_id', activeCompanyId)
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('clients')
-        .select('*')
-        .eq('company_id', activeCompanyId)
-        .eq('is_archived', false)
-        .order('name'),
-    ]);
-    setProjects((proj || []) as (Project & { client: Client })[]);
-    setClients((cl || []) as Client[]);
-    setLoading(false);
-  }, [activeCompanyId, companyLoading, supabase]);
-
-  useEffect(() => {
-    void Promise.resolve().then(() => {
-      setProjects([]);
-      setClients([]);
-      return fetchData();
-    });
-  }, [fetchData]);
+  const loading = companyLoading || cacheLoading;
 
   const filtered = projects.filter(p =>
     [p.project_name, p.project_code, p.client?.name, p.client?.company_name]
@@ -113,7 +77,7 @@ export default function ProjectsPage() {
     if (!error) {
       setShowModal(false);
       setForm({ client_id: '', project_name: '', description: '', billing_type: 'single_invoice', total_contract_amount: '', project_manager: '', start_date: '', end_date: '', status: 'active', notes: '' });
-      fetchData();
+      mutate();
     } else {
       alert('Error: ' + error.message);
     }

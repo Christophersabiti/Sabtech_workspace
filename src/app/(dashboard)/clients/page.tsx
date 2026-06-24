@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
+import { useClients } from '@/hooks/useClients';
 import { ClientWithStats } from '@/types';
 import { formatCurrency } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -69,121 +70,19 @@ export default function ClientsPage() {
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
   const { filters, patch, clear, hasActive } = useClientFilters();
 
-  const [clients, setClients] = useState<ClientWithStats[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [editingClient,    setEditingClient]    = useState<ClientWithStats | null>(null);
   const [showImportModal,  setShowImportModal]  = useState(false);
-  const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const load = useCallback(async () => {
-    setLoadWarning(null);
+  const { clients, loading: cacheLoading, loadWarning, mutate } = useClients(
+    activeCompanyId,
+    showArchived,
+    filters
+  );
 
-    if (!activeCompanyId) {
-      if (!companyLoading) {
-        setClients([]);
-        setLoading(false);
-        setLoadWarning('No active company workspace is selected. Enter a company from Platform Admin or complete company onboarding.');
-      }
-      return;
-    }
-
-    setLoading(true);
-
-    if (showArchived) {
-      // Simple query for archived view — no stats needed
-      const { data } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('company_id', activeCompanyId)
-        .eq('is_archived', true)
-        .order('name');
-
-      setClients(
-        ((data || []) as ClientWithStats[]).map(c => ({
-          ...c,
-          active_projects: 0,
-          total_outstanding: 0,
-          has_overdue: false,
-        })),
-      );
-    } else {
-      const { data, error } = await supabase.rpc('get_clients_filtered', {
-        p_company_id: activeCompanyId,
-        p_search: filters.search || null,
-        p_status: filters.status || null,
-        p_has_overdue: filters.hasOverdue,
-        p_has_active_projects: filters.hasActiveProjects,
-        p_currency: filters.currency || null,
-      });
-
-      const shouldCheckFallback =
-        !error
-        && (data || []).length === 0
-        && !filters.search
-        && !filters.status
-        && !filters.currency
-        && filters.hasOverdue === null
-        && filters.hasActiveProjects === null;
-
-      if (error || shouldCheckFallback) {
-        if (!error && shouldCheckFallback) {
-          console.warn('Client stats RPC returned no rows. Checking direct tenant clients query.');
-        } else {
-          console.error('Failed to load client stats. Falling back to tenant-scoped clients query:', error);
-        }
-
-        // Build fallback query with the same filters the RPC would have applied
-        let fallbackQ = supabase
-          .from('clients')
-          .select('*')
-          .eq('company_id', activeCompanyId)
-          .eq('is_archived', false);
-
-        if (filters.search) {
-          const s = filters.search;
-          fallbackQ = fallbackQ.or(
-            `name.ilike.%${s}%,company_name.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%,client_code.ilike.%${s}%`,
-          );
-        }
-        if (filters.status)   fallbackQ = fallbackQ.eq('status',   filters.status);
-        if (filters.currency) fallbackQ = fallbackQ.eq('currency', filters.currency);
-
-        const { data: fallbackClients, error: fallbackError } = await fallbackQ.order('name');
-
-        if (fallbackError) {
-          console.error('Failed to load clients fallback:', fallbackError);
-          setLoadWarning(fallbackError.message);
-          setClients([]);
-        } else {
-          if ((fallbackClients || []).length > 0) {
-            setLoadWarning('Client totals are temporarily unavailable. Showing tenant clients without financial stats.');
-          }
-          setClients(
-            ((fallbackClients || []) as ClientWithStats[]).map(c => ({
-              ...c,
-              active_projects: 0,
-              total_outstanding: 0,
-              has_overdue: false,
-            })),
-          );
-        }
-      } else {
-        setClients((data || []) as ClientWithStats[]);
-      }
-    }
-
-    setLoading(false);
-  }, [activeCompanyId, companyLoading, filters, showArchived, supabase]);
-
-  useEffect(() => {
-    void Promise.resolve().then(() => {
-      setClients([]);
-      return load();
-    });
-  }, [load]);
+  const loading = companyLoading || cacheLoading;
 
   // Stats from current result set (non-archived)
   const totalClients = clients.length;
@@ -198,7 +97,7 @@ export default function ClientsPage() {
       .update({ is_archived: !client.is_archived })
       .eq('id', client.id)
       .eq('company_id', client.company_id);
-    load();
+    mutate();
   }
 
   return (
@@ -540,9 +439,9 @@ export default function ClientsPage() {
           open={showImportModal}
           onClose={() => setShowImportModal(false)}
           companyId={activeCompanyId}
-          onImported={count => {
+          onImported={() => {
             setShowImportModal(false);
-            void load();
+            void mutate();
           }}
         />
       )}
@@ -552,7 +451,7 @@ export default function ClientsPage() {
         <EditClientPanel
           client={editingClient}
           onClose={() => setEditingClient(null)}
-          onSaved={() => { setEditingClient(null); load(); }}
+          onSaved={() => { setEditingClient(null); mutate(); }}
         />
       )}
     </div>

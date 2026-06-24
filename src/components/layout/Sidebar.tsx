@@ -35,6 +35,7 @@ import { useState, useEffect, useMemo, ElementType } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { usePlatformImpersonation } from '@/hooks/usePlatformImpersonation';
+import { clearQueryCache } from '@/components/providers/CacheProvider';
 import { useSidebar } from './SidebarContext';
 import { NavItem } from './NavItem';
 import { NotificationBell } from './NotificationBell';
@@ -502,6 +503,7 @@ export function SidebarNavContent({
   async function handleLogout() {
     const supabase = createClient();
     await supabase.auth.signOut();
+    clearQueryCache();
     router.push('/login');
   }
 
