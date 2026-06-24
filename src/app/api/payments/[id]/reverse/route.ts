@@ -80,6 +80,7 @@ export async function POST(
   const { error: updateErr } = await supabase
     .from('payments')
     .update({
+      is_confirmed:     false,
       status:           'reversed',
       reversal_reason:  body.reason.trim(),
       reversed_at:      new Date().toISOString(),
