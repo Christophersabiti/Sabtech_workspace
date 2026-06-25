@@ -317,9 +317,13 @@ export default function ProjectProfilePage() {
   const [editProjectForm, setEditProjectForm] = useState({
     project_name: '', project_manager: '', status: 'active' as Project['status'],
     start_date: '', end_date: '', total_contract_amount: '', description: '',
+    portfolio_id: '',
   });
   const [savingProject, setSavingProject] = useState(false);
   const [projectToast,  setProjectToast]  = useState<{ msg: string; ok: boolean } | null>(null);
+
+  const [portfolios, setPortfolios] = useState<{ id: string; name: string }[]>([]);
+  const [currentPortfolioId, setCurrentPortfolioId] = useState<string>('');
 
   // ── Schedule modal ─────────────────────────────────────────────────────────
   const [showScheduleForm, setShowScheduleForm] = useState(false);
@@ -356,7 +360,9 @@ export default function ProjectProfilePage() {
       { data: inv },
       { data: sched },
       { data: tsk },
-      { data: exp }
+      { data: exp },
+      { data: ports },
+      { data: ppLinks }
     ] = await Promise.all([
       supabase.from('projects').select('*, client:clients(*)').eq('id', id).eq('company_id', activeCompanyId).single(),
       supabase.from('invoices').select('*').eq('project_id', id).eq('company_id', activeCompanyId).order('issue_date', { ascending: false }),
@@ -364,11 +370,16 @@ export default function ProjectProfilePage() {
       supabase.from('project_tasks').select('*').eq('project_id', id).eq('company_id', activeCompanyId)
         .order('sort_order').order('start_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
       supabase.from('expenses').select('*, category:expense_categories(name)').eq('project_id', id).eq('company_id', activeCompanyId),
+      supabase.from('portfolios').select('id, name').eq('company_id', activeCompanyId).order('name'),
+      supabase.from('portfolio_projects').select('portfolio_id').eq('project_id', id).eq('company_id', activeCompanyId).limit(1)
     ]);
     setProject(proj as Project & { client: Client });
     setInvoices(inv || []);
     setSchedules(sched || []);
     setExpenses(exp || []);
+    setPortfolios((ports || []) as { id: string; name: string }[]);
+    const linkedPortId = ppLinks && ppLinks[0] ? ppLinks[0].portfolio_id : '';
+    setCurrentPortfolioId(linkedPortId);
 
     // Load PM data in parallel
     const [{ data: msData }, { data: raidData }, { data: crData }, { data: depData }] = await Promise.all([
@@ -436,6 +447,7 @@ export default function ProjectProfilePage() {
       end_date:               project.end_date || '',
       total_contract_amount:  project.total_contract_amount != null ? String(project.total_contract_amount) : '',
       description:            project.description || '',
+      portfolio_id:           currentPortfolioId,
     });
     setShowEditProject(true);
   }
@@ -453,10 +465,26 @@ export default function ProjectProfilePage() {
       total_contract_amount: editProjectForm.total_contract_amount ? parseFloat(editProjectForm.total_contract_amount) : null,
       description:           editProjectForm.description.trim() || null,
     };
+    
+    // Save project changes
     const { error } = await supabase.from('projects').update(payload).eq('id', id).eq('company_id', project.company_id);
+    
     if (error) {
       setProjectToast({ msg: error.message, ok: false });
     } else {
+      // Sync portfolio linkage if changed
+      if (editProjectForm.portfolio_id !== currentPortfolioId) {
+        await supabase.from('portfolio_projects').delete().eq('project_id', id).eq('company_id', project.company_id);
+        if (editProjectForm.portfolio_id) {
+          await supabase.from('portfolio_projects').insert({
+            company_id: project.company_id,
+            project_id: id,
+            portfolio_id: editProjectForm.portfolio_id,
+          });
+        }
+        setCurrentPortfolioId(editProjectForm.portfolio_id);
+      }
+
       setProject(p => p ? { ...p, ...payload } : p);
       setShowEditProject(false);
       setProjectToast({ msg: 'Project updated.', ok: true });
@@ -1782,6 +1810,19 @@ export default function ProjectProfilePage() {
                   onChange={e => setEditProjectForm(f => ({ ...f, project_name: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Portfolio (Optional)</label>
+                <select
+                  value={editProjectForm.portfolio_id}
+                  onChange={e => setEditProjectForm(f => ({ ...f, portfolio_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">None (Independent Project)</option>
+                  {portfolios.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Status *</label>

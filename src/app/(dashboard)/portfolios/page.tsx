@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useActiveCompany } from '@/hooks/useActiveCompany';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -47,7 +48,7 @@ export default function PortfoliosPage() {
   const supabase = useMemo(() => createClient(), []);
   const { activeCompanyId, loading: companyLoading } = useActiveCompany();
 
-  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+  const [portfolios, setPortfolios] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -60,10 +61,10 @@ export default function PortfoliosPage() {
 
     const { data } = await supabase
       .from('portfolios')
-      .select('*, client:clients(name)')
+      .select('*, client:clients(name), portfolio_projects(project:projects(id, project_name, status))')
       .eq('company_id', activeCompanyId)
       .order('created_at', { ascending: false });
-    return (data || []) as Portfolio[];
+    return (data || []) as any[];
   }, [activeCompanyId, supabase]);
 
   useEffect(() => {
@@ -194,9 +195,14 @@ export default function PortfoliosPage() {
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1 mb-4">
-                  <HealthIcon className={`h-3.5 w-3.5 ${health.color}`} />
-                  <span className={`text-xs font-medium ${health.color}`}>{health.label}</span>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-1">
+                    <HealthIcon className={`h-3.5 w-3.5 ${health.color}`} />
+                    <span className={`text-xs font-medium ${health.color}`}>{health.label}</span>
+                  </div>
+                  <span className="text-xs text-slate-500 font-medium">
+                    {p.portfolio_projects?.length || 0} Project{p.portfolio_projects?.length !== 1 ? 's' : ''}
+                  </span>
                 </div>
 
                 {/* Progress bar */}
@@ -225,6 +231,27 @@ export default function PortfoliosPage() {
                     </p>
                   </div>
                 </div>
+
+                {p.portfolio_projects && p.portfolio_projects.length > 0 && (
+                  <div className="border-t border-slate-100 pt-3 mt-3 mb-3">
+                    <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">Linked Projects</p>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                      {p.portfolio_projects.map(({ project }: any) => {
+                        if (!project) return null;
+                        return (
+                          <Link
+                            key={project.id}
+                            href={`/projects/${project.id}`}
+                            className="inline-flex items-center gap-1.5 text-[11px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded px-2.5 py-0.5 text-slate-600 hover:text-slate-900 transition-colors truncate max-w-[150px]"
+                          >
+                            <span className="truncate">{project.project_name}</span>
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${project.status === 'completed' ? 'bg-blue-500' : 'bg-green-500'}`} />
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-3 border-t border-slate-100">
                   <button

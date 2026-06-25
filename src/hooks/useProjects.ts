@@ -7,13 +7,15 @@ import { createClient } from '@/lib/supabase/client';
 import { Client, Project } from '@/types';
 
 type ProjectsData = {
-  projects: (Project & { client: Client })[];
+  projects: (Project & { client: Client; portfolio_projects?: { portfolio_id: string }[] })[];
   clients: Client[];
+  portfolios: { id: string; name: string }[];
 };
 
 interface UseProjectsResult {
-  projects: (Project & { client: Client })[];
+  projects: (Project & { client: Client; portfolio_projects?: { portfolio_id: string }[] })[];
   clients: Client[];
+  portfolios: { id: string; name: string }[];
   loading: boolean;
   error: unknown;
   mutate: KeyedMutator<ProjectsData>;
@@ -27,12 +29,12 @@ export function useProjects(activeCompanyId: string | null): UseProjectsResult {
   const { data, error, isValidating, mutate } = useSWR<ProjectsData, unknown>(
     cacheKey,
     async () => {
-      if (!activeCompanyId) return { projects: [], clients: [] };
+      if (!activeCompanyId) return { projects: [], clients: [], portfolios: [] };
 
-      const [projRes, clRes] = await Promise.all([
+      const [projRes, clRes, portRes] = await Promise.all([
         supabase
           .from('projects')
-          .select('*, client:clients(*)')
+          .select('*, client:clients(*), portfolio_projects(portfolio_id)')
           .eq('company_id', activeCompanyId)
           .order('created_at', { ascending: false }),
         supabase
@@ -41,14 +43,21 @@ export function useProjects(activeCompanyId: string | null): UseProjectsResult {
           .eq('company_id', activeCompanyId)
           .eq('is_archived', false)
           .order('name'),
+        supabase
+          .from('portfolios')
+          .select('id, name')
+          .eq('company_id', activeCompanyId)
+          .order('name'),
       ]);
 
       if (projRes.error) throw projRes.error;
       if (clRes.error) throw clRes.error;
+      if (portRes.error) throw portRes.error;
 
       return {
-        projects: (projRes.data || []) as (Project & { client: Client })[],
+        projects: (projRes.data || []) as (Project & { client: Client; portfolio_projects?: { portfolio_id: string }[] })[],
         clients: (clRes.data || []) as Client[],
+        portfolios: (portRes.data || []) as { id: string; name: string }[],
       };
     },
     {
@@ -61,6 +70,7 @@ export function useProjects(activeCompanyId: string | null): UseProjectsResult {
   return {
     projects: data?.projects || [],
     clients: data?.clients || [],
+    portfolios: data?.portfolios || [],
     loading: !data && !error && isValidating,
     error,
     mutate,

@@ -45,10 +45,10 @@ export default function ProjectsPage() {
     client_id: '', project_name: '', description: '',
     billing_type: 'single_invoice', total_contract_amount: '',
     project_manager: '', start_date: '', end_date: '',
-    status: 'active', notes: '',
+    status: 'active', notes: '', portfolio_id: '',
   });
 
-  const { projects, clients, loading: cacheLoading, mutate } = useProjects(activeCompanyId);
+  const { projects, clients, portfolios, loading: cacheLoading, mutate } = useProjects(activeCompanyId);
 
   const loading = companyLoading || cacheLoading;
 
@@ -66,20 +66,52 @@ export default function ProjectsPage() {
     }
     setSaving(true);
     const project_code = generateProjectCode(form.project_name);
-    const { error } = await supabase.from('projects').insert({
-      ...form,
-      company_id: activeCompanyId,
-      project_code,
-      total_contract_amount: form.total_contract_amount ? parseFloat(form.total_contract_amount) : null,
-      start_date: form.start_date || null,
-      end_date: form.end_date || null,
-    });
-    if (!error) {
+    
+    // Insert project and select the returned id
+    const { data: newProj, error } = await supabase
+      .from('projects')
+      .insert({
+        client_id: form.client_id,
+        project_code,
+        project_name: form.project_name.trim(),
+        description: form.description.trim() || null,
+        billing_type: form.billing_type,
+        total_contract_amount: form.total_contract_amount ? parseFloat(form.total_contract_amount) : null,
+        project_manager: form.project_manager.trim() || null,
+        start_date: form.start_date || null,
+        end_date: form.end_date || null,
+        status: form.status,
+        notes: form.notes.trim() || null,
+        company_id: activeCompanyId,
+      })
+      .select('id')
+      .single();
+
+    if (!error && newProj) {
+      // If portfolio is selected, link it via portfolio_projects
+      if (form.portfolio_id) {
+        const { error: linkErr } = await supabase
+          .from('portfolio_projects')
+          .insert({
+            company_id: activeCompanyId,
+            portfolio_id: form.portfolio_id,
+            project_id: newProj.id,
+          });
+        if (linkErr) {
+          alert('Project created but failed to link to Portfolio: ' + linkErr.message);
+        }
+      }
+      
       setShowModal(false);
-      setForm({ client_id: '', project_name: '', description: '', billing_type: 'single_invoice', total_contract_amount: '', project_manager: '', start_date: '', end_date: '', status: 'active', notes: '' });
+      setForm({
+        client_id: '', project_name: '', description: '',
+        billing_type: 'single_invoice', total_contract_amount: '',
+        project_manager: '', start_date: '', end_date: '',
+        status: 'active', notes: '', portfolio_id: '',
+      });
       mutate();
     } else {
-      alert('Error: ' + error.message);
+      alert('Error: ' + (error ? error.message : 'Unknown error'));
     }
     setSaving(false);
   }
@@ -213,6 +245,19 @@ export default function ProjectsPage() {
                   <option value="">Select client...</option>
                   {clients.map(c => (
                     <option key={c.id} value={c.id}>{c.name}{c.company_name ? ` (${c.company_name})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Portfolio (Optional)</label>
+                <select
+                  value={form.portfolio_id}
+                  onChange={e => setForm(f => ({ ...f, portfolio_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">None (Independent Project)</option>
+                  {portfolios.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
               </div>
